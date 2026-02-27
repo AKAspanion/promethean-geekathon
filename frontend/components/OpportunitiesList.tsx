@@ -1,0 +1,88 @@
+'use client';
+
+import { useQuery } from '@tanstack/react-query';
+import { opportunitiesApi, Opportunity } from '@/lib/api';
+import { formatDistanceToNow } from 'date-fns';
+
+const typeColors = {
+  cost_saving: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400',
+  time_saving: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400',
+  quality_improvement: 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400',
+  market_expansion: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400',
+  supplier_diversification: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-400',
+};
+
+const statusColors = {
+  identified: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400',
+  evaluating: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400',
+  implementing: 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400',
+  realized: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400',
+  expired: 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400',
+};
+
+export function OpportunitiesList() {
+  const { data: opportunities, isLoading } = useQuery<Opportunity[]>({
+    queryKey: ['opportunities'],
+    queryFn: () => opportunitiesApi.getAll(),
+  });
+
+  if (isLoading) {
+    return (
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow border border-light-gray dark:border-gray-700 p-6">
+        <h2 className="heading-3 text-dark-gray dark:text-gray-200 mb-4">Opportunities</h2>
+        <div className="space-y-4">
+          {[1, 2, 3].map(i => (
+            <div key={i} className="animate-pulse">
+              <div className="h-4 bg-light-gray dark:bg-gray-700 rounded w-3/4 mb-2"></div>
+              <div className="h-3 bg-light-gray dark:bg-gray-700 rounded w-full"></div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (!opportunities || opportunities.length === 0) {
+    return (
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow border border-light-gray dark:border-gray-700 p-6">
+        <h2 className="heading-3 text-dark-gray dark:text-gray-200 mb-4">Opportunities</h2>
+        <p className="body-text text-medium-gray dark:text-gray-400">No opportunities identified</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow border border-light-gray dark:border-gray-700 p-6">
+      <h2 className="heading-3 text-dark-gray dark:text-gray-200 mb-4">Opportunities</h2>
+      <div className="space-y-4">
+        {opportunities.slice(0, 10).map(opportunity => (
+          <div
+            key={opportunity.id}
+            className="border border-light-gray dark:border-gray-600 rounded-lg p-4 hover:bg-off-white dark:hover:bg-gray-700/50 transition-colors"
+          >
+            <div className="flex items-start justify-between mb-2">
+              <h3 className="heading-3 text-dark-gray dark:text-gray-200">{opportunity.title}</h3>
+              <div className="flex gap-2">
+                <span className={`px-2 py-1 rounded-lg text-xs font-medium ${typeColors[opportunity.type]}`}>
+                  {opportunity.type.replace('_', ' ')}
+                </span>
+                <span className={`px-2 py-1 rounded-lg text-xs font-medium ${statusColors[opportunity.status]}`}>
+                  {opportunity.status}
+                </span>
+              </div>
+            </div>
+            <p className="body-text text-medium-gray dark:text-gray-400 mb-2">{opportunity.description}</p>
+            <div className="flex flex-wrap gap-4 text-xs text-medium-gray dark:text-gray-400">
+              {opportunity.affectedRegion && <span>📍 {opportunity.affectedRegion}</span>}
+              {opportunity.estimatedValue && <span>💰 ${opportunity.estimatedValue.toLocaleString()}</span>}
+              {opportunity.mitigationPlans && opportunity.mitigationPlans.length > 0 && (
+                <span>📋 {opportunity.mitigationPlans.length} plan(s)</span>
+              )}
+              <span>{formatDistanceToNow(new Date(opportunity.createdAt), { addSuffix: true })}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
