@@ -378,6 +378,32 @@ export function SupplierDetailClient({ id }: { id: string }) {
               )}
             </div>
 
+            {/* AI Reasoning card */}
+            {!isEditing && supplier.aiReasoning && (
+              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-violet-200 dark:border-violet-800 p-6">
+                <div className="flex items-center gap-3 mb-3">
+                  <span className="rounded-md bg-violet-100 dark:bg-violet-900/30 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-400">
+                    AI Reasoning
+                  </span>
+                  {supplier.latestRiskLevel && (
+                    <span
+                      className={`inline-flex items-center px-2.5 py-0.5 rounded-lg text-xs font-semibold ${swarmLevelBadgeClasses[supplier.latestRiskLevel] ?? 'bg-light-gray/50 text-dark-gray'}`}
+                    >
+                      {supplier.latestRiskLevel}
+                    </span>
+                  )}
+                  {supplier.latestRiskScore != null && (
+                    <span className="text-sm text-medium-gray dark:text-gray-400">
+                      Score: {supplier.latestRiskScore.toFixed(1)}/100
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm leading-relaxed text-dark-gray/80 dark:text-gray-300">
+                  {supplier.aiReasoning}
+                </p>
+              </div>
+            )}
+
             {/* Risk summary card */}
             {!isEditing && (
               <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-light-gray dark:border-gray-700 p-6">

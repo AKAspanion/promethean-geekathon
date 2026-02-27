@@ -179,6 +179,7 @@ export interface Supplier {
   createdAt: string;
   updatedAt: string;
   riskSummary: SupplierRiskSummary;
+  aiReasoning?: string | null;
   swarm?: SupplierSwarmSummary | null;
 }
 

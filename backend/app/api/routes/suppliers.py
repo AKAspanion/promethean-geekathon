@@ -14,6 +14,7 @@ from app.services.suppliers import (
     update_one,
     delete_one,
     get_risks_by_supplier,
+    get_latest_risk_analysis_by_supplier,
     get_latest_swarm_by_supplier,
 )
 
@@ -50,6 +51,7 @@ def list_suppliers(
 ):
     suppliers = get_all(db, oem.id)
     risk_map = get_risks_by_supplier(db)
+    reasoning_map = get_latest_risk_analysis_by_supplier(db, oem.id)
     swarm_map = get_latest_swarm_by_supplier(db, oem.id)
     return [
         {
@@ -74,6 +76,7 @@ def list_suppliers(
                 s.name,
                 {"count": 0, "bySeverity": {}, "latest": None},
             ),
+            "aiReasoning": reasoning_map.get(s.id),
             "swarm": swarm_map.get(s.id),
         }
         for s in suppliers
@@ -90,6 +93,7 @@ def get_supplier_by_id(
     if not supplier:
         return None
     risk_map = get_risks_by_supplier(db)
+    reasoning_map = get_latest_risk_analysis_by_supplier(db, oem.id)
     swarm_map = get_latest_swarm_by_supplier(db, oem.id)
     return {
         **{
@@ -113,11 +117,12 @@ def get_supplier_by_id(
             supplier.name,
             {"count": 0, "bySeverity": {}, "latest": None},
         ),
+        "aiReasoning": reasoning_map.get(supplier.id),
         "swarm": swarm_map.get(supplier.id),
     }
 
 
-def _format_supplier(supplier, risk_map, swarm_map):
+def _format_supplier(supplier, risk_map, swarm_map, reasoning_map=None):
     return {
         **{
             "id": str(supplier.id),
@@ -140,6 +145,7 @@ def _format_supplier(supplier, risk_map, swarm_map):
             supplier.name,
             {"count": 0, "bySeverity": {}, "latest": None},
         ),
+        "aiReasoning": (reasoning_map or {}).get(supplier.id),
         "swarm": swarm_map.get(supplier.id),
     }
 
@@ -156,8 +162,9 @@ def update_supplier(
     if not supplier:
         raise HTTPException(status_code=404, detail="Supplier not found")
     risk_map = get_risks_by_supplier(db)
+    reasoning_map = get_latest_risk_analysis_by_supplier(db, oem.id)
     swarm_map = get_latest_swarm_by_supplier(db, oem.id)
-    return _format_supplier(supplier, risk_map, swarm_map)
+    return _format_supplier(supplier, risk_map, swarm_map, reasoning_map)
 
 
 @router.delete("/{id}", status_code=204)

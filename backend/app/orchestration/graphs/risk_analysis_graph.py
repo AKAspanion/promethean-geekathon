@@ -615,10 +615,13 @@ async def _broadcast_status(
 
 
 async def _broadcast_suppliers(db: Session, oem_id: UUID) -> None:
+    from app.services.suppliers import get_latest_risk_analysis_by_supplier
+
     suppliers = get_suppliers(db, oem_id)
     if not suppliers:
         return
     risk_map = get_risks_by_supplier(db)
+    reasoning_map = get_latest_risk_analysis_by_supplier(db, oem_id)
     swarm_map = get_latest_swarm_by_supplier(db, oem_id)
     payload = [
         {
@@ -642,6 +645,7 @@ async def _broadcast_suppliers(db: Session, oem_id: UUID) -> None:
             "riskSummary": risk_map.get(
                 s.name, {"count": 0, "bySeverity": {}, "latest": None}
             ),
+            "aiReasoning": reasoning_map.get(s.id),
             "swarm": swarm_map.get(s.id),
         }
         for s in suppliers

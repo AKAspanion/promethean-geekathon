@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.models.supplier import Supplier
 from app.models.risk import Risk, RiskSeverity, RiskStatus
+from app.models.supplier_risk_analysis import SupplierRiskAnalysis
 from app.models.swarm_analysis import SwarmAnalysis
 
 
@@ -407,6 +408,29 @@ def _build_swarm_summary_for_supplier(risks: List[Risk]) -> Optional[dict]:
         "mitigationPlan": mitigation_plan,
         "agents": agents,
     }
+
+
+def get_latest_risk_analysis_by_supplier(
+    db: Session, oem_id: UUID
+) -> Dict[UUID, str]:
+    """
+    Return a mapping of supplier_id -> latest SupplierRiskAnalysis.description.
+    """
+    rows = (
+        db.query(SupplierRiskAnalysis.supplierId, SupplierRiskAnalysis.description)
+        .filter(
+            SupplierRiskAnalysis.oemId == oem_id,
+            SupplierRiskAnalysis.supplierId.isnot(None),
+            SupplierRiskAnalysis.description.isnot(None),
+        )
+        .order_by(SupplierRiskAnalysis.createdAt.desc())
+        .all()
+    )
+    result: Dict[UUID, str] = {}
+    for row in rows:
+        if row.supplierId not in result:
+            result[row.supplierId] = row.description
+    return result
 
 
 def get_latest_swarm_by_supplier(
