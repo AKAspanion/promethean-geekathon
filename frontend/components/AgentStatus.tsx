@@ -1,34 +1,35 @@
-'use client';
+"use client";
 
-import { useEffect, useRef, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { agentApi, AgentStatus as AgentStatusType } from '@/lib/api';
-import { useStreamingText } from '@/hooks/useStreamingText';
-import { formatDistanceToNow } from 'date-fns';
+import { useEffect, useRef, useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { agentApi, AgentStatus as AgentStatusType } from "@/lib/api";
+import { useStreamingText } from "@/hooks/useStreamingText";
+import { formatDistanceToNow } from "date-fns";
+import { CircularScore, getScoreTextClass } from "@/components/CircularScore";
 
 const statusColors: Record<string, string> = {
-  idle: 'bg-medium-gray',
-  monitoring: 'bg-primary-light',
-  analyzing: 'bg-cyan-blue',
-  processing: 'bg-primary-dark',
-  completed: 'bg-green-500',
-  error: 'bg-red-500',
+  idle: "bg-medium-gray",
+  monitoring: "bg-primary-light",
+  analyzing: "bg-cyan-blue",
+  processing: "bg-primary-dark",
+  completed: "bg-green-500",
+  error: "bg-red-500",
 };
 
 const statusLabels: Record<string, string> = {
-  idle: 'Idle',
-  monitoring: 'Monitoring',
-  analyzing: 'Analyzing',
-  processing: 'Processing',
-  completed: 'Completed',
-  error: 'Error',
+  idle: "Idle",
+  monitoring: "Monitoring",
+  analyzing: "Analyzing",
+  processing: "Processing",
+  completed: "Completed",
+  error: "Error",
 };
 
 function StreamingTaskText({ text }: { text: string }) {
   const { displayed, isStreaming } = useStreamingText(text);
 
   return (
-    <div className="flex items-start gap-2 mb-4 min-h-6">
+    <div className="flex items-start gap-2 min-h-5">
       <div className="shrink-0 -mt-0.5">
         {isStreaming ? (
           <span className="relative flex h-2 w-2 mt-[11px]">
@@ -51,26 +52,53 @@ function StreamingTaskText({ text }: { text: string }) {
 
 function StatusLogFeed({ history }: { history: string[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     if (containerRef.current) {
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
     }
-  }, [history.length]);
+  }, [history.length, expanded]);
 
   if (history.length <= 1) return null;
 
   return (
-    <div
-      ref={containerRef}
-      className="mb-4 max-h-24 overflow-y-auto rounded-lg bg-off-white dark:bg-gray-900/50 border border-light-gray dark:border-gray-700 px-3 py-2 space-y-1 scroll-smooth"
-    >
-      {history.slice(0, -1).map((entry, i) => (
-        <div key={`${i}-${entry}`} className="flex items-center gap-2 text-xs text-medium-gray dark:text-gray-500">
-          <span className="inline-flex h-1.5 w-1.5 rounded-full bg-light-gray dark:bg-gray-600 shrink-0" />
-          <span className="truncate">{entry}</span>
-        </div>
-      ))}
+    <div className="relative mb-4">
+      <div
+        ref={containerRef}
+        className={`overflow-y-auto rounded-lg bg-off-white dark:bg-gray-900/50 border border-light-gray dark:border-gray-700 px-3 py-2 space-y-1 scroll-smooth transition-all duration-300 ${
+          expanded ? "max-h-[50vh]" : "max-h-24"
+        }`}
+      >
+        {history.slice(0, -1).map((entry, i) => (
+          <div
+            key={`${i}-${entry}`}
+            className="flex items-center gap-2 text-xs text-medium-gray dark:text-gray-500"
+          >
+            <span className="inline-flex h-1.5 w-1.5 rounded-full bg-light-gray dark:bg-gray-600 shrink-0" />
+            <span className="truncate">{entry}</span>
+          </div>
+        ))}
+      </div>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="absolute -bottom-3 right-3 w-6 h-6 flex items-center justify-center rounded-full bg-primary-dark text-white shadow-md hover:bg-primary-light transition-colors"
+        title={expanded ? "Collapse logs" : "Expand logs"}
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 20 20"
+          fill="currentColor"
+          className={`w-3.5 h-3.5 transition-transform duration-300 ${expanded ? "rotate-180" : ""}`}
+        >
+          <path
+            fillRule="evenodd"
+            d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z"
+            clipRule="evenodd"
+          />
+        </svg>
+      </button>
     </div>
   );
 }
@@ -78,7 +106,7 @@ function StatusLogFeed({ history }: { history: string[] }) {
 export function AgentStatus() {
   const queryClient = useQueryClient();
   const { data: status, isLoading } = useQuery<AgentStatusType>({
-    queryKey: ['agent-status'],
+    queryKey: ["agent-status"],
     queryFn: agentApi.getStatus,
   });
 
@@ -89,12 +117,12 @@ export function AgentStatus() {
       setTaskHistory([]);
       setPrevTask(undefined);
       queryClient.setQueryData<AgentStatusType | undefined>(
-        ['agent-status'],
+        ["agent-status"],
         (prev) =>
           prev
             ? {
                 ...prev,
-                status: 'analyzing' as const,
+                status: "analyzing" as const,
                 currentTask: undefined,
                 errorMessage: undefined,
                 risksDetected: 0,
@@ -106,11 +134,11 @@ export function AgentStatus() {
       );
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['agent-status'] });
-      queryClient.invalidateQueries({ queryKey: ['risks'] });
-      queryClient.invalidateQueries({ queryKey: ['opportunities'] });
-      queryClient.invalidateQueries({ queryKey: ['mitigation-plans'] });
-      queryClient.invalidateQueries({ queryKey: ['suppliers'] });
+      queryClient.invalidateQueries({ queryKey: ["agent-status"] });
+      queryClient.invalidateQueries({ queryKey: ["risks"] });
+      queryClient.invalidateQueries({ queryKey: ["opportunities"] });
+      queryClient.invalidateQueries({ queryKey: ["mitigation-plans"] });
+      queryClient.invalidateQueries({ queryKey: ["suppliers"] });
     },
   });
 
@@ -121,7 +149,7 @@ export function AgentStatus() {
 
   if (status?.status !== prevStatus) {
     setPrevStatus(status?.status);
-    if (status?.status === 'idle') {
+    if (status?.status === "idle") {
       setTaskHistory([]);
       setPrevTask(undefined);
     }
@@ -148,93 +176,82 @@ export function AgentStatus() {
 
   if (!status) return null;
 
-  const isActive = ['analyzing', 'processing', 'monitoring'].includes(status.status);
+  const isActive = ["analyzing", "processing", "monitoring"].includes(
+    status.status,
+  );
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow border border-light-gray dark:border-gray-700 p-6">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="heading-3 text-dark-gray dark:text-gray-200">Agent Status</h2>
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => triggerMutation.mutate()}
-            disabled={triggerMutation.isPending || isActive}
-            className="px-5 py-2.5 bg-primary-dark hover:bg-primary-light disabled:bg-light-gray dark:disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors text-base"
-          >
-            {triggerMutation.isPending ? 'Triggering...' : isActive ? 'Running...' : 'Trigger Analysis'}
-          </button>
-          <div className="flex items-center gap-2">
-            <div className={`w-3 h-3 rounded-full ${statusColors[status.status]} ${isActive ? 'animate-pulse' : ''}`} />
-            <span className="text-sm font-medium text-dark-gray dark:text-gray-300">
-              {statusLabels[status.status]}
-            </span>
+        <div className="min-w-0 flex-1 mr-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            <h2 className="heading-3 text-dark-gray dark:text-gray-200">
+              Agent Status
+            </h2>
+            <div className="flex items-center gap-2">
+              <div
+                className={`w-3 h-3 rounded-full ${statusColors[status.status]} ${isActive ? "animate-pulse" : ""}`}
+              />
+              <span className="text-sm font-medium text-dark-gray dark:text-gray-300">
+                {statusLabels[status.status]}
+              </span>
+            </div>
+            {status.lastUpdated && (
+              <span className="text-xs text-medium-gray dark:text-gray-400">
+                {formatDistanceToNow(new Date(status.lastUpdated), {
+                  addSuffix: true,
+                })}
+              </span>
+            )}
           </div>
+          {status.currentTask && (
+            <div className="mt-1">
+              <StreamingTaskText text={status.currentTask} />
+            </div>
+          )}
         </div>
+        <button
+          type="button"
+          onClick={() => triggerMutation.mutate()}
+          disabled={triggerMutation.isPending || isActive}
+          className="px-5 py-2.5 bg-primary-dark hover:bg-primary-light disabled:bg-light-gray dark:disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors text-base shrink-0"
+        >
+          {triggerMutation.isPending
+            ? "Running..."
+            : isActive
+              ? "Running..."
+              : "Trigger Analysis"}
+        </button>
       </div>
 
-      {status.currentTask && (
-        <>
-          <StatusLogFeed history={taskHistory} />
-          <StreamingTaskText text={status.currentTask} />
-        </>
+      {status.currentTask && taskHistory.length > 1 && (
+        <StatusLogFeed history={taskHistory} />
       )}
 
       {status.errorMessage && (
         <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 mb-4">
-          <p className="text-sm text-red-800 dark:text-red-300">{status.errorMessage}</p>
+          <p className="text-sm text-red-800 dark:text-red-300">
+            {status.errorMessage}
+          </p>
         </div>
       )}
-
-      <div className="grid grid-cols-3 gap-4 mt-4">
-        <div className="text-center">
-          <div className="text-2xl font-bold text-dark-gray dark:text-gray-200">{status.risksDetected}</div>
-          <div className="text-xs text-medium-gray dark:text-gray-400">Risks Detected</div>
-        </div>
-        <div className="text-center">
-          <div className="text-2xl font-bold text-cyan-blue">
-            {status.opportunitiesIdentified}
-          </div>
-          <div className="text-xs text-medium-gray dark:text-gray-400">Opportunities</div>
-        </div>
-        <div className="text-center">
-          <div className="text-2xl font-bold text-primary-light">{status.plansGenerated}</div>
-          <div className="text-xs text-medium-gray dark:text-gray-400">Plans Generated</div>
-        </div>
-      </div>
 
       {status.riskScore != null && (
         <div className="mt-4 pt-4 border-t border-light-gray dark:border-gray-700">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-medium-gray dark:text-gray-400 uppercase tracking-wider">
-              OEM Risk Score
-            </span>
-            <span className={`text-lg font-bold ${
-              status.riskScore <= 25 ? 'text-green-600 dark:text-green-400' :
-              status.riskScore <= 50 ? 'text-yellow-600 dark:text-yellow-400' :
-              status.riskScore <= 75 ? 'text-orange-600 dark:text-orange-400' :
-              'text-red-600 dark:text-red-400'
-            }`}>
-              {status.riskScore.toFixed(1)}/100
-            </span>
-          </div>
-          <div className="mt-2 w-full bg-light-gray dark:bg-gray-700 rounded-full h-2">
-            <div
-              className={`h-2 rounded-full transition-all duration-500 ${
-                status.riskScore <= 25 ? 'bg-green-500' :
-                status.riskScore <= 50 ? 'bg-yellow-500' :
-                status.riskScore <= 75 ? 'bg-orange-500' :
-                'bg-red-500'
-              }`}
-              style={{ width: `${Math.min(100, status.riskScore)}%` }}
-            />
+          <div className="flex items-center gap-4">
+            <CircularScore score={status.riskScore} size="lg" />
+            <div>
+              <span className="text-xs font-medium text-medium-gray dark:text-gray-400 uppercase tracking-wider">
+                OEM Risk Score
+              </span>
+              <div
+                className={`text-lg font-bold ${getScoreTextClass(status.riskScore)}`}
+              >
+                {status.riskScore.toFixed(1)}/100
+              </div>
+            </div>
           </div>
         </div>
-      )}
-
-      {status.lastUpdated && (
-        <p className="text-xs text-medium-gray dark:text-gray-400 mt-4">
-          Last updated: {formatDistanceToNow(new Date(status.lastUpdated), { addSuffix: true })}
-        </p>
       )}
     </div>
   );

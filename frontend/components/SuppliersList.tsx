@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { suppliersApi, Supplier } from "@/lib/api";
+import { CircularScore } from "@/components/CircularScore";
 
 const riskLevelColors: Record<string, string> = {
   LOW: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
@@ -96,25 +97,13 @@ export function SuppliersList() {
 
                 <div className="flex flex-col items-end gap-2 shrink-0">
                   {hasScore && (
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-3">
                       <span
                         className={`px-2 py-1 rounded-lg text-xs font-medium ${riskColor}`}
                       >
                         {riskLevel}
                       </span>
-                      <span
-                        className={`text-sm font-bold ${
-                          supplier.latestRiskScore! <= 25
-                            ? "text-green-600 dark:text-green-400"
-                            : supplier.latestRiskScore! <= 50
-                              ? "text-yellow-600 dark:text-yellow-400"
-                              : supplier.latestRiskScore! <= 75
-                                ? "text-orange-600 dark:text-orange-400"
-                                : "text-red-600 dark:text-red-400"
-                        }`}
-                      >
-                        {supplier.latestRiskScore!.toFixed(1)}
-                      </span>
+                      <CircularScore score={supplier.latestRiskScore!} size="sm" />
                     </div>
                   )}
                   {riskSummary && riskSummary.count > 0 && (
@@ -138,27 +127,6 @@ export function SuppliersList() {
                   )}
                 </div>
               </div>
-
-              {hasScore && (
-                <div className="mt-3">
-                  <div className="w-full bg-light-gray dark:bg-gray-700 rounded-full h-1.5">
-                    <div
-                      className={`h-1.5 rounded-full transition-all duration-500 ${
-                        supplier.latestRiskScore! <= 25
-                          ? "bg-green-500"
-                          : supplier.latestRiskScore! <= 50
-                            ? "bg-yellow-500"
-                            : supplier.latestRiskScore! <= 75
-                              ? "bg-orange-500"
-                              : "bg-red-500"
-                      }`}
-                      style={{
-                        width: `${Math.min(100, supplier.latestRiskScore!)}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-              )}
             </Link>
           );
         })}
