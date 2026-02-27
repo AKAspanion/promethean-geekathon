@@ -205,6 +205,23 @@ export async function patchRecord(
   return replaceRecord(prisma, collectionId, recordId, merged);
 }
 
+export async function createManyRecords(
+  prisma: PrismaClient,
+  collectionId: string,
+  dataArray: Record<string, unknown>[]
+): Promise<RecordModel[]> {
+  return prisma.$transaction(
+    dataArray.map((data) =>
+      prisma.record.create({
+        data: {
+          collectionId,
+          data: (data ?? {}) as unknown as object,
+        },
+      })
+    )
+  );
+}
+
 export async function deleteRecord(
   prisma: PrismaClient,
   collectionId: string,

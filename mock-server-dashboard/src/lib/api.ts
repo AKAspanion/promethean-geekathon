@@ -97,5 +97,13 @@ export const api = {
       fetchApi<void>(`/mock/${collectionSlug}/${id}`, {
         method: "DELETE",
       }),
+    bulkCreate: (data: Record<string, unknown>[]) =>
+      fetchApi<import("./types").BulkCreateResponse>(
+        `/mock/${collectionSlug}/bulk`,
+        {
+          method: "POST",
+          body: JSON.stringify(data),
+        }
+      ),
   }),
 };

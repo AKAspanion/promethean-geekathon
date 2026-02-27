@@ -66,6 +66,16 @@ export function usePatchRecord(collectionSlug: string, recordId: string) {
   });
 }
 
+export function useBulkCreateRecords(collectionSlug: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Record<string, unknown>[]) =>
+      api.records(collectionSlug).bulkCreate(data),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["records", collectionSlug] }),
+  });
+}
+
 export function useDeleteRecord(collectionSlug: string) {
   const queryClient = useQueryClient();
   return useMutation({

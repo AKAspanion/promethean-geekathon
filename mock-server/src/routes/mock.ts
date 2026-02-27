@@ -116,6 +116,37 @@ router.get("/:collectionSlug", async (req: Request, res: Response, next: NextFun
   }
 });
 
+router.post("/:collectionSlug/bulk", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const collection = req.collection!;
+    const body = req.body;
+    if (!Array.isArray(body)) {
+      res.status(400).json({ error: "Body must be a JSON array" });
+      return;
+    }
+    if (body.length === 0) {
+      res.status(400).json({ error: "Array must not be empty" });
+      return;
+    }
+    if (body.length > 1000) {
+      res.status(400).json({ error: "Array must not exceed 1000 items" });
+      return;
+    }
+    for (let i = 0; i < body.length; i++) {
+      const item = body[i];
+      if (typeof item !== "object" || item === null || Array.isArray(item)) {
+        res.status(400).json({ error: `Item at index ${i} must be a JSON object` });
+        return;
+      }
+    }
+    const prisma = getPrisma(req);
+    const created = await recordsRepo.createManyRecords(prisma, collection.id, body);
+    res.status(201).json({ items: created.map(mapRecord), count: created.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post("/:collectionSlug", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const collection = req.collection!;

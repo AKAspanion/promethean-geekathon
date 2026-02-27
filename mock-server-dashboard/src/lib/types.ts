@@ -42,3 +42,8 @@ export interface RecordsListResponse {
   limit: number;
   offset: number;
 }
+
+export interface BulkCreateResponse {
+  items: RecordItem[];
+  count: number;
+}

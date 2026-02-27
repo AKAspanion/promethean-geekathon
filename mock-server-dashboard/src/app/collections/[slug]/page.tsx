@@ -4,11 +4,13 @@ import { use, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { RecordTable } from "@/components/Records/RecordTable";
 import { RecordModal } from "@/components/Records/RecordModal";
+import { BulkUploadModal } from "@/components/Records/BulkUploadModal";
 import {
   useRecordsList,
   useCreateRecord,
   useReplaceRecord,
   useDeleteRecord,
+  useBulkCreateRecords,
 } from "@/lib/queries/records";
 import { useCollection as useCollectionQuery } from "@/lib/queries/collections";
 import type { RecordItem } from "@/lib/types";
@@ -52,6 +54,7 @@ export default function CollectionDetailPage({ params }: PageProps) {
   }, [appliedQuery, resolvedSlug, showToast]);
 
   const [modalOpen, setModalOpen] = useState(false);
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<RecordItem | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -70,6 +73,7 @@ export default function CollectionDetailPage({ params }: PageProps) {
     editingRecord?.id ?? ""
   );
   const deleteMutation = useDeleteRecord(resolvedSlug);
+  const bulkCreateMutation = useBulkCreateRecords(resolvedSlug);
 
   const openCreate = useCallback(() => {
     setEditingRecord(null);
@@ -187,13 +191,22 @@ export default function CollectionDetailPage({ params }: PageProps) {
             </button>
           )}
         </div>
-        <button
-          type="button"
-          onClick={openCreate}
-          className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
-        >
-          New record
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setBulkModalOpen(true)}
+            className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+          >
+            Bulk upload
+          </button>
+          <button
+            type="button"
+            onClick={openCreate}
+            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+          >
+            New record
+          </button>
+        </div>
       </div>
 
       {appliedQuery && (
@@ -226,6 +239,17 @@ export default function CollectionDetailPage({ params }: PageProps) {
           onClose={closeModal}
           onSubmit={handleSubmit}
           isPending={createMutation.isPending || replaceMutation.isPending}
+        />
+      )}
+      {bulkModalOpen && (
+        <BulkUploadModal
+          onClose={() => setBulkModalOpen(false)}
+          onSubmit={(data) =>
+            bulkCreateMutation.mutate(data, {
+              onSuccess: () => setBulkModalOpen(false),
+            })
+          }
+          isPending={bulkCreateMutation.isPending}
         />
       )}
       {toast && (
