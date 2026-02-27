@@ -167,7 +167,7 @@ export default function SuppliersPage() {
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
                 </svg>
-                Back
+                Dashboard
               </Link>
               <div>
                 <h1 className="heading-2 text-primary-dark dark:text-primary-light">
