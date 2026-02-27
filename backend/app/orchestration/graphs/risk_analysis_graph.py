@@ -115,7 +115,7 @@ Detected risks:
 {risks_json}
 
 Respond ONLY with a JSON object in this exact format, no other text:
-{{"score": <number between 0 and 100>, "reasoning": "<brief 1-2 sentence explanation>"}}"""
+{{"score": <number between 0 and 100>, "reasoning": "<a concise 2-4 sentence summary explaining the key risk drivers, their potential impact on the supply chain, and why this score was assigned>"}}"""
 )
 
 
@@ -368,7 +368,7 @@ async def _process_next_supplier(
     _update_status(
         db, agent_status_id,
         AgentStatus.ANALYZING.value,
-        f"[v2] Running risk analysis for supplier: {label}",
+        f"Running risk analysis for supplier: {label}",
     )
     await _broadcast_status(db, agent_status_id, supplier_name=supplier_name, oem_name=oem_name)
 
@@ -395,7 +395,7 @@ async def _process_next_supplier(
     _update_status(
         db, agent_status_id,
         AgentStatus.PROCESSING.value,
-        f"[v2] Saving results for supplier: {label}",
+        f"Saving results for supplier: {label}",
     )
     await _broadcast_status(db, agent_status_id, supplier_name=supplier_name, oem_name=oem_name)
 
@@ -403,6 +403,10 @@ async def _process_next_supplier(
         r["oemId"] = oem_id
         if supplier_id_uuid is not None:
             r["supplierId"] = supplier_id_uuid
+        # Ensure affectedSupplier is always set when we know the supplier name
+        if supplier_name and not r.get("affectedSupplier"):
+            r["affectedSupplier"] = supplier_name
+            r["supplierName"] = supplier_name
         create_risk_from_dict(
             db, r,
             agent_status_id=agent_status_id,
@@ -457,7 +461,7 @@ async def _process_next_supplier(
     _update_status(
         db, agent_status_id,
         AgentStatus.ANALYZING.value,
-        f"[v2] Computing LLM risk score for supplier: {label}",
+        f"Computing LLM risk score for supplier: {label}",
     )
     await _broadcast_status(db, agent_status_id, supplier_name=supplier_name, oem_name=oem_name)
 
@@ -498,8 +502,8 @@ async def _process_next_supplier(
                     supplierId=supplier_id_uuid,
                     riskScore=unified_score,
                     risks=[str(r.id) for r in top_risks],
-                    description=(
-                        f"[v2] Risk score for {label} "
+                    description=llm_reasoning or (
+                        f"Risk score for {label} "
                         f"— top {len(top_risks)} risks"
                     ),
                     metadata_={
@@ -666,7 +670,7 @@ async def _broadcast_complete(
             db,
             UUID(ctx["agent_status_id"]),
             AgentStatus.COMPLETED.value,
-            "[v2] Risk analysis completed",
+            "Risk analysis completed",
         )
         await _broadcast_status(
             db, UUID(ctx["agent_status_id"]),

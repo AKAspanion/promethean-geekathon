@@ -291,7 +291,7 @@ async def _process_next_supplier(
     _update_status(
         db, agent_status_id,
         AgentStatus.MONITORING.value,
-        f"[v2] Fetching data for supplier: {label}",
+        f"Fetching data for supplier: {label}",
     )
     await _broadcast_status(db, agent_status_id)
 
@@ -301,7 +301,7 @@ async def _process_next_supplier(
     _update_status(
         db, agent_status_id,
         AgentStatus.ANALYZING.value,
-        f"[v2] Running domain agents for supplier: {label}",
+        f"Running domain agents for supplier: {label}",
     )
     await _broadcast_status(db, agent_status_id)
 
@@ -324,14 +324,18 @@ async def _process_next_supplier(
     _update_status(
         db, agent_status_id,
         AgentStatus.PROCESSING.value,
-        f"[v2] Saving results for supplier: {label}",
+        f"Saving results for supplier: {label}",
     )
     await _broadcast_status(db, agent_status_id)
 
+    supplier_name = scope.get("supplierName")
     for r in all_risks:
         r["oemId"] = oem_id
         if supplier_id_uuid is not None:
             r["supplierId"] = supplier_id_uuid
+        if supplier_name and not r.get("affectedSupplier"):
+            r["affectedSupplier"] = supplier_name
+            r["supplierName"] = supplier_name
         create_risk_from_dict(
             db, r,
             agent_status_id=agent_status_id,
@@ -377,7 +381,7 @@ async def _process_next_supplier(
                     riskScore=unified_score,
                     risks=[str(r.id) for r in supplier_risk_rows],
                     description=(
-                        f"[v2] Supplier risk score for {label} "
+                        f"Supplier risk score for {label} "
                         f"in workflow run {workflow_run_id}"
                     ),
                     metadata_={
@@ -655,7 +659,7 @@ async def _broadcast_complete(
             db,
             UUID(ctx["agent_status_id"]),
             AgentStatus.COMPLETED.value,
-            "[v2] Analysis completed",
+            "Analysis completed",
         )
 
     await _broadcast_suppliers(db, oem_id)

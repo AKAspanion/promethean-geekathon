@@ -158,6 +158,10 @@ def delete_one(db: Session, id: UUID, oem_id: UUID) -> bool:
 def get_risks_by_supplier(db: Session) -> dict:
     """
     Lightweight aggregation used by the existing UI to show simple counts.
+
+    Resolves risks to supplier names via affectedSupplier/affectedSuppliers
+    first, then falls back to the supplierId FK for risks where the LLM
+    returned a null affectedSupplier (e.g. global-context news risks).
     """
     risks = (
         db.query(
@@ -166,11 +170,33 @@ def get_risks_by_supplier(db: Session) -> dict:
             Risk.severity,
             Risk.affectedSupplier,
             Risk.affectedSuppliers,
+            Risk.supplierId,
             Risk.createdAt,
         )
         .order_by(Risk.createdAt.desc())
         .all()
     )
+
+    # Build a supplierId -> supplier name lookup for risks missing affectedSupplier
+    supplier_ids_needing_name: set = set()
+    for r in risks:
+        has_name = bool(
+            getattr(r, "affectedSuppliers", None)
+            or (r.affectedSupplier and r.affectedSupplier.strip())
+        )
+        if not has_name and r.supplierId:
+            supplier_ids_needing_name.add(r.supplierId)
+
+    supplier_id_to_name: Dict[str, str] = {}
+    if supplier_ids_needing_name:
+        rows = (
+            db.query(Supplier.id, Supplier.name)
+            .filter(Supplier.id.in_(supplier_ids_needing_name))
+            .all()
+        )
+        for row in rows:
+            supplier_id_to_name[str(row.id)] = row.name
+
     out: Dict[str, dict] = {}
     for r in risks:
         # Support multiple suppliers per risk; fall back to single label.
@@ -181,6 +207,13 @@ def get_risks_by_supplier(db: Session) -> dict:
             ]
         elif r.affectedSupplier:
             names = [r.affectedSupplier.strip()]
+
+        # Fallback: resolve via supplierId when name fields are empty
+        if not names and r.supplierId:
+            resolved = supplier_id_to_name.get(str(r.supplierId))
+            if resolved:
+                names = [resolved]
+
         for key in names:
             if not key:
                 continue
@@ -381,13 +414,34 @@ def get_swarm_summaries_by_supplier(
     """
     Compute Swarm Controller style outputs per supplier using existing Risk rows.
 
-    The key is the supplier name (matching Risk.affectedSupplier and Supplier.name),
-    because that is how risks are currently correlated to suppliers in the system.
+    Resolves risks to supplier names via affectedSupplier/affectedSuppliers
+    first, then falls back to the supplierId FK for risks where the LLM
+    returned a null affectedSupplier (e.g. global-context news risks).
     """
     q = db.query(Risk).filter(Risk.status == RiskStatus.DETECTED)
     if oem_id:
         q = q.filter(Risk.oemId == oem_id)
     risks = q.order_by(Risk.createdAt.desc()).all()
+
+    # Build a supplierId -> supplier name lookup for risks missing affectedSupplier
+    supplier_ids_needing_name: set = set()
+    for r in risks:
+        has_name = bool(
+            getattr(r, "affectedSuppliers", None)
+            or (r.affectedSupplier and r.affectedSupplier.strip())
+        )
+        if not has_name and r.supplierId:
+            supplier_ids_needing_name.add(r.supplierId)
+
+    supplier_id_to_name: Dict[str, str] = {}
+    if supplier_ids_needing_name:
+        rows = (
+            db.query(Supplier.id, Supplier.name)
+            .filter(Supplier.id.in_(supplier_ids_needing_name))
+            .all()
+        )
+        for row in rows:
+            supplier_id_to_name[str(row.id)] = row.name
 
     grouped: Dict[str, List[Risk]] = {}
     for r in risks:
@@ -398,6 +452,13 @@ def get_swarm_summaries_by_supplier(
             ]
         elif r.affectedSupplier:
             names = [r.affectedSupplier.strip()]
+
+        # Fallback: resolve via supplierId when name fields are empty
+        if not names and r.supplierId:
+            resolved = supplier_id_to_name.get(str(r.supplierId))
+            if resolved:
+                names = [resolved]
+
         for key in names:
             if not key:
                 continue

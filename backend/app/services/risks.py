@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID
 from decimal import Decimal, InvalidOperation
 from sqlalchemy.orm import Session, joinedload
@@ -6,6 +7,8 @@ from sqlalchemy import func
 from app.models.risk import Risk, RiskSeverity, RiskStatus
 from app.models.supplier import Supplier
 from app.schemas.risk import CreateRisk, UpdateRisk
+
+logger = logging.getLogger(__name__)
 
 
 def get_all(
@@ -180,6 +183,14 @@ def create_risk_from_dict(
                 suppliers_list.insert(0, supplier_name)
         else:
             suppliers_list = [supplier_name]
+
+    if not supplier_id:
+        logger.warning(
+            "create_risk_from_dict: no supplierId resolved for risk '%s' "
+            "(affectedSupplier=%s). Risk will not appear in supplier reports.",
+            data.get("title", "?"),
+            primary_name,
+        )
 
     risk = Risk(
         title=data["title"],

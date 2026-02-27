@@ -592,10 +592,14 @@ async def _run_analysis_for_oem(
     supplier_id_from_scope = (
         UUID(scope["supplierId"]) if scope.get("supplierId") else None
     )
+    supplier_name_from_scope = scope.get("supplierName")
     for r in combined_risks:
         r["oemId"] = oem_id
         if supplier_id_from_scope is not None:
             r["supplierId"] = supplier_id_from_scope
+        if supplier_name_from_scope and not r.get("affectedSupplier"):
+            r["affectedSupplier"] = supplier_name_from_scope
+            r["supplierName"] = supplier_name_from_scope
         create_risk_from_dict(
             db,
             r,
@@ -636,6 +640,9 @@ async def _run_analysis_for_oem(
         r["oemId"] = oem_id
         if supplier_id_from_scope is not None:
             r["supplierId"] = supplier_id_from_scope
+        if supplier_name_from_scope and not r.get("affectedSupplier"):
+            r["affectedSupplier"] = supplier_name_from_scope
+            r["supplierName"] = supplier_name_from_scope
         create_risk_from_dict(
             db,
             r,
@@ -668,6 +675,9 @@ async def _run_analysis_for_oem(
         r["oemId"] = oem_id
         if supplier_id_from_scope is not None:
             r["supplierId"] = supplier_id_from_scope
+        if supplier_name_from_scope and not r.get("affectedSupplier"):
+            r["affectedSupplier"] = supplier_name_from_scope
+            r["supplierName"] = supplier_name_from_scope
         create_risk_from_dict(
             db,
             r,
@@ -1209,9 +1219,9 @@ def trigger_manual_analysis_v2_sync(db: Session, oem_id: UUID | None) -> None:
             db.refresh(workflow_run)
 
             task_label = (
-                f"[v2] {oem.name} / {scope.get('supplierName', '')}"
+                f"{oem.name} / {scope.get('supplierName', '')}"
                 if scope.get("supplierName")
-                else f"[v2] {oem.name}"
+                else f"{oem.name}"
             )
             run = _create_agent_run_in_db(
                 db,
