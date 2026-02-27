@@ -181,76 +181,71 @@ export function AgentStatus() {
   );
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow border border-light-gray dark:border-gray-700 p-6">
-      <div className="flex items-center justify-between mb-4">
-        <div className="min-w-0 flex-1 mr-4">
-          <div className="flex items-center gap-3 flex-wrap">
-            <h2 className="heading-3 text-dark-gray dark:text-gray-200">
-              Agent Status
-            </h2>
-            <div className="flex items-center gap-2">
-              <div
-                className={`w-3 h-3 rounded-full ${statusColors[status.status]} ${isActive ? "animate-pulse" : ""}`}
-              />
-              <span className="text-sm font-medium text-dark-gray dark:text-gray-300">
-                {statusLabels[status.status]}
-              </span>
-            </div>
-            {status.lastUpdated && (
-              <span className="text-xs text-medium-gray dark:text-gray-400">
-                {formatDistanceToNow(new Date(status.lastUpdated), {
-                  addSuffix: true,
-                })}
-              </span>
-            )}
-          </div>
-          {status.currentTask && (
-            <div className="mt-1">
-              <StreamingTaskText text={status.currentTask} />
-            </div>
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow border border-light-gray dark:border-gray-700 p-6 space-y-4">
+      {/* Row 1: Agent Status label | status badge + time | gap | Trigger button */}
+      <div className="flex items-center gap-4">
+        <h2 className="heading-3 text-dark-gray dark:text-gray-200 shrink-0">
+          Agent Status
+        </h2>
+        <div className="flex items-center gap-2">
+          <div
+            className={`w-2.5 h-2.5 rounded-full ${statusColors[status.status]} ${isActive ? "animate-pulse" : ""}`}
+          />
+          <span className="text-sm font-medium text-dark-gray dark:text-gray-300">
+            {statusLabels[status.status]}
+          </span>
+          {status.lastUpdated && (
+            <span className="text-xs text-medium-gray dark:text-gray-400 ml-1">
+              &middot;{" "}
+              {formatDistanceToNow(new Date(status.lastUpdated), {
+                addSuffix: true,
+              })}
+            </span>
           )}
         </div>
+        <div className="flex-1" />
+        {status.riskScore != null && (
+          <div className="flex items-center gap-2 shrink-0">
+            <CircularScore score={status.riskScore} size="sm" />
+            <div className="leading-tight">
+              <span className="text-[10px] font-medium text-medium-gray dark:text-gray-400 uppercase tracking-wider">
+                OEM Risk
+              </span>
+              <div
+                className={`text-sm font-bold ${getScoreTextClass(status.riskScore)}`}
+              >
+                {status.riskScore.toFixed(1)}
+              </div>
+            </div>
+          </div>
+        )}
         <button
           type="button"
           onClick={() => triggerMutation.mutate()}
           disabled={triggerMutation.isPending || isActive}
-          className="px-5 py-2.5 bg-primary-dark hover:bg-primary-light disabled:bg-light-gray dark:disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors text-base shrink-0"
+          className="px-5 py-2 bg-primary-dark hover:bg-primary-light disabled:bg-light-gray dark:disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors text-sm shrink-0"
         >
-          {triggerMutation.isPending
-            ? "Running..."
-            : isActive
-              ? "Running..."
-              : "Trigger Analysis"}
+          {triggerMutation.isPending || isActive ? "Running..." : "Trigger Analysis"}
         </button>
       </div>
 
-      {status.currentTask && taskHistory.length > 1 && (
+      {/* Row 2: Logs — only visible when active */}
+      {isActive && taskHistory.length > 1 && (
         <StatusLogFeed history={taskHistory} />
       )}
 
-      {status.errorMessage && (
-        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 mb-4">
-          <p className="text-sm text-red-800 dark:text-red-300">
-            {status.errorMessage}
-          </p>
-        </div>
-      )}
+      {/* Row 3: Current agent task / error */}
+      {(status.currentTask || status.errorMessage) && (
+        <div className="pt-3 border-t border-light-gray dark:border-gray-700 space-y-3">
+          {status.currentTask && <StreamingTaskText text={status.currentTask} />}
 
-      {status.riskScore != null && (
-        <div className="mt-4 pt-4 border-t border-light-gray dark:border-gray-700">
-          <div className="flex items-center gap-4">
-            <CircularScore score={status.riskScore} size="lg" />
-            <div>
-              <span className="text-xs font-medium text-medium-gray dark:text-gray-400 uppercase tracking-wider">
-                OEM Risk Score
-              </span>
-              <div
-                className={`text-lg font-bold ${getScoreTextClass(status.riskScore)}`}
-              >
-                {status.riskScore.toFixed(1)}/100
-              </div>
+          {status.errorMessage && (
+            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
+              <p className="text-sm text-red-800 dark:text-red-300">
+                {status.errorMessage}
+              </p>
             </div>
-          </div>
+          )}
         </div>
       )}
     </div>

@@ -114,6 +114,16 @@ export interface MitigationPlan {
   updatedAt: string;
 }
 
+export interface SupplyChainRiskScore {
+  id: string;
+  oemId: string;
+  overallScore: number;
+  breakdown: Record<string, number> | null;
+  severityCounts: Record<string, number> | null;
+  summary: string | null;
+  createdAt: string | null;
+}
+
 export interface SupplierRiskSummary {
   count: number;
   bySeverity: Record<string, number>;
@@ -193,6 +203,8 @@ export const risksApi = {
   getById: (id: string) =>
     api.get<Risk>(`/risks/${id}`).then((res) => res.data),
   getStats: () => api.get("/risks/stats/summary").then((res) => res.data),
+  getSupplyChainScore: () =>
+    api.get<SupplyChainRiskScore | null>("/risks/supply-chain-score").then((res) => res.data),
 };
 
 export const opportunitiesApi = {

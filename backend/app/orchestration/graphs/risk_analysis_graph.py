@@ -75,6 +75,7 @@ from app.services.suppliers import (
 )
 from app.services.websocket_manager import (
     broadcast_agent_status,
+    broadcast_oem_risk_score,
     broadcast_suppliers_snapshot,
 )
 from app.orchestration.graphs.states import (
@@ -232,6 +233,148 @@ async def _llm_risk_score(
         )
         fallback_score, _, _ = compute_score_from_dicts(risks)
         return fallback_score, f"LLM error — used algorithmic fallback: {exc}"
+
+
+# -- LLM OEM risk summary ------------------------------------------------------
+
+_OEM_SUMMARY_PROMPT = ChatPromptTemplate.from_template(
+    """You are a supply chain risk analyst. Given the following aggregated risk data
+for an OEM's entire supply chain, write a concise executive summary (3-5 sentences)
+that a supply chain manager can quickly read on a dashboard.
+
+Overall risk score: {overall_score}/100
+Risk level: {risk_level}
+
+Severity breakdown:
+{severity_counts_json}
+
+Domain breakdown (per-domain weighted contributions):
+{breakdown_json}
+
+Top risks (by severity):
+{top_risks_json}
+
+Write a plain-text summary (NO JSON, NO markdown) that:
+1. States the overall risk posture in one sentence.
+2. Highlights the top 2-3 risk drivers and their potential impact.
+3. Notes which domain (weather, shipping, news) contributes most to the risk.
+4. Ends with a brief recommended focus area.
+
+Keep it under 400 characters. Be specific — reference actual risk titles and regions when available."""
+)
+
+
+async def _generate_oem_summary(
+    overall: float,
+    risk_level: str,
+    breakdown: dict,
+    severity_counts: dict,
+    risk_rows: list,
+) -> str:
+    """Generate a concise LLM summary for the OEM-level risk score."""
+    llm = get_chat_model()
+    if llm is None or not risk_rows:
+        return _fallback_oem_summary(overall, risk_level, severity_counts, breakdown)
+
+    top_risks = sorted(
+        risk_rows,
+        key=lambda r: _SEV_ORDER.get(
+            getattr(r.severity, "value", r.severity), 99
+        ),
+    )[:10]
+    top_risks_json = json.dumps(
+        [
+            {
+                "title": getattr(r, "title", ""),
+                "severity": getattr(r.severity, "value", r.severity),
+                "affectedRegion": getattr(r, "affectedRegion", ""),
+                "sourceType": r.sourceType,
+            }
+            for r in top_risks
+        ],
+        indent=2,
+    )
+
+    invoke_params = {
+        "overall_score": round(overall, 1),
+        "risk_level": risk_level,
+        "severity_counts_json": json.dumps(severity_counts, indent=2),
+        "breakdown_json": json.dumps(breakdown, indent=2),
+        "top_risks_json": top_risks_json,
+    }
+
+    provider = getattr(llm, "model_provider", None) or type(llm).__name__
+    model_name = getattr(llm, "model_name", None) or getattr(llm, "model", "unknown")
+    call_id = _uuid.uuid4().hex[:8]
+    start = time.perf_counter()
+    prompt_text = _OEM_SUMMARY_PROMPT.format(**invoke_params)
+
+    try:
+        chain = _OEM_SUMMARY_PROMPT | llm
+        msg = await chain.ainvoke(invoke_params)
+
+        elapsed = int((time.perf_counter() - start) * 1000)
+        content = msg.content
+        if isinstance(content, str):
+            raw_text = content
+        else:
+            parts: list[str] = []
+            for block in content:
+                if isinstance(block, dict) and "text" in block:
+                    parts.append(str(block.get("text") or ""))
+                else:
+                    parts.append(str(block))
+            raw_text = "".join(parts)
+
+        logger.info(
+            "[OEMSummary] LLM response id=%s provider=%s elapsed_ms=%d len=%d",
+            call_id, provider, elapsed, len(raw_text),
+        )
+        _persist_llm_log(
+            call_id, provider, str(model_name),
+            str(prompt_text), raw_text, "success", elapsed, None,
+        )
+
+        summary = raw_text.strip()
+        if summary:
+            return summary
+
+    except Exception as exc:
+        elapsed = int((time.perf_counter() - start) * 1000)
+        logger.exception("[OEMSummary] LLM error: %s", exc)
+        _persist_llm_log(
+            call_id, provider, str(model_name),
+            str(prompt_text), None, "error", elapsed, str(exc),
+        )
+
+    return _fallback_oem_summary(overall, risk_level, severity_counts, breakdown)
+
+
+def _fallback_oem_summary(
+    overall: float,
+    risk_level: str,
+    severity_counts: dict,
+    breakdown: dict,
+) -> str:
+    """Rule-based fallback summary when LLM is unavailable."""
+    critical = severity_counts.get("critical", 0)
+    high = severity_counts.get("high", 0)
+    medium = severity_counts.get("medium", 0)
+    low = severity_counts.get("low", 0)
+    total = critical + high + medium + low
+
+    top_domain = max(breakdown, key=lambda k: breakdown.get(k, 0)) if breakdown else "unknown"
+
+    parts = [f"Overall risk is {risk_level} with a score of {overall:.1f}/100."]
+    if total:
+        parts.append(
+            f"{total} risks detected: {critical} critical, {high} high, "
+            f"{medium} medium, {low} low."
+        )
+    if top_domain != "unknown":
+        parts.append(f"Primary risk driver: {top_domain} domain.")
+
+    return " ".join(parts)
 
 
 # -- LLM swarm analysis --------------------------------------------------------
@@ -869,6 +1012,11 @@ async def _aggregate_oem_score(
     overall, breakdown, severity_counts = compute_score_from_dicts(risk_dicts)
     oem_risk_level = score_to_level(overall)
 
+    # Generate an executive summary for the OEM risk score
+    summary = await _generate_oem_summary(
+        overall, oem_risk_level, breakdown, severity_counts, all_risks_orm,
+    )
+
     db.add(
         SupplyChainRiskScore(
             oemId=oem_id,
@@ -881,16 +1029,22 @@ async def _aggregate_oem_score(
                 if all_risks_orm
                 else None
             ),
+            summary=summary,
         )
     )
     db.commit()
 
     logger.info(
-        "RiskAnalysisGraph: OEM %s — overall_score=%.2f level=%s risks=%d",
+        "RiskAnalysisGraph: OEM %s — overall_score=%.2f level=%s risks=%d summary=%s",
         state["oem_id"], overall, oem_risk_level, len(all_risks_orm),
+        (summary or "")[:80],
     )
 
-    return {"oem_risk_score": overall, "oem_risk_level": oem_risk_level}
+    return {
+        "oem_risk_score": overall,
+        "oem_risk_level": oem_risk_level,
+        "oem_risk_summary": summary,
+    }
 
 
 async def _broadcast_complete(
@@ -901,21 +1055,50 @@ async def _broadcast_complete(
     db: Session = config["configurable"]["db"]
     oem_id = UUID(state["oem_id"])
 
+    # Batch-update all supplier statuses to COMPLETED in DB (no per-supplier broadcast)
     for ctx in state.get("processed_contexts") or []:
-        scope: OemScope = ctx["scope"]
         _update_status(
             db,
             UUID(ctx["agent_status_id"]),
             AgentStatus.COMPLETED.value,
             "Risk analysis completed",
         )
+
+    # Single broadcast: final suppliers snapshot
+    await _broadcast_suppliers(db, oem_id)
+
+    # Single broadcast: OEM-level risk score with summary
+    latest = (
+        db.query(SupplyChainRiskScore)
+        .filter(SupplyChainRiskScore.oemId == oem_id)
+        .order_by(SupplyChainRiskScore.createdAt.desc())
+        .first()
+    )
+    if latest:
+        await broadcast_oem_risk_score(
+            str(oem_id),
+            {
+                "id": str(latest.id),
+                "oemId": str(latest.oemId),
+                "overallScore": float(latest.overallScore),
+                "breakdown": latest.breakdown,
+                "severityCounts": latest.severityCounts,
+                "summary": latest.summary,
+                "createdAt": latest.createdAt.isoformat() if latest.createdAt else None,
+            },
+        )
+
+    # Single broadcast: final completed agent status (use the last supplier's context)
+    contexts = state.get("processed_contexts") or []
+    if contexts:
+        last_ctx = contexts[-1]
+        scope: OemScope = last_ctx["scope"]
         await _broadcast_status(
-            db, UUID(ctx["agent_status_id"]),
+            db, UUID(last_ctx["agent_status_id"]),
             supplier_name=scope.get("supplierName"),
             oem_name=scope.get("oemName"),
         )
 
-    await _broadcast_suppliers(db, oem_id)
     return {}
 
 

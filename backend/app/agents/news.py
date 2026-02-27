@@ -757,7 +757,7 @@ async def run_news_agent_graph(
         context, len(risks_for_db), len(opps_for_db), entity_label,
     )
     await _broadcast_progress(
-        "completed",
+        "context_done",
         f"Completed {context} analysis: {len(risks_for_db)} risks, {len(opps_for_db)} opportunities",
         context,
         {"risks": len(risks_for_db), "opportunities": len(opps_for_db)},

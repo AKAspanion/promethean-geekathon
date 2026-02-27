@@ -129,3 +129,4 @@ class RiskAnalysisState(TypedDict, total=False):
     # Set by aggregate_oem_score.
     oem_risk_score: float
     oem_risk_level: str
+    oem_risk_summary: str

@@ -76,3 +76,16 @@ async def broadcast_suppliers_snapshot(
             "suppliers": suppliers,
         }
     )
+
+
+async def broadcast_oem_risk_score(oem_id: str, score: dict[str, Any]) -> None:
+    """
+    Broadcast the latest OEM-level supply chain risk score with summary.
+    """
+    await manager.broadcast(
+        {
+            "type": "oem_risk_score",
+            "oemId": oem_id,
+            "score": score,
+        }
+    )

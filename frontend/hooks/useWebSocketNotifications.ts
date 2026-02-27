@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { AgentStatus, Supplier } from '@/lib/api';
+import type { AgentStatus, Supplier, SupplyChainRiskScore } from '@/lib/api';
 
 type AgentStatusMessage = {
   type: 'agent_status';
@@ -25,10 +25,17 @@ type NewsAgentProgressMessage = {
   details?: Record<string, unknown>;
 };
 
+type OemRiskScoreMessage = {
+  type: 'oem_risk_score';
+  oemId: string;
+  score: SupplyChainRiskScore;
+};
+
 type NotificationMessage =
   | AgentStatusMessage
   | SuppliersSnapshotMessage
-  | NewsAgentProgressMessage;
+  | NewsAgentProgressMessage
+  | OemRiskScoreMessage;
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -76,6 +83,18 @@ export function useWebSocketNotifications() {
           queryClient.setQueryData<Supplier[] | undefined>(
             ['suppliers'],
             data.suppliers,
+          );
+        }
+
+        if (data.type === 'oem_risk_score') {
+          console.log('[WS] oem_risk_score', {
+            oemId: data.oemId,
+            overallScore: data.score.overallScore,
+            summary: data.score.summary,
+          });
+          queryClient.setQueryData<SupplyChainRiskScore | undefined>(
+            ['oem-risk-score'],
+            data.score,
           );
         }
 

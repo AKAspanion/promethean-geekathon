@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import {
   risksApi,
@@ -9,6 +10,7 @@ import {
   trendInsightsApi,
   type Risk,
   type Supplier,
+  type SupplyChainRiskScore,
   type TrendInsightItem,
   type TrendInsightRunResult,
 } from "@/lib/api";
@@ -525,6 +527,7 @@ function TrendDevView({
 // ── Main dashboard ────────────────────────────────────────────────────────────
 
 export function NewsRiskDashboard() {
+  const queryClient = useQueryClient();
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loadingSuppliers, setLoadingSuppliers] = useState(true);
   const [selectedSupplierId, setSelectedSupplierId] = useState<string | null>(
@@ -555,7 +558,24 @@ export function NewsRiskDashboard() {
   const [trendsDevView, setTrendsDevView] = useState(false);
   const [trendsCopied, setTrendsCopied] = useState(false);
 
-  // ── Load suppliers on mount ────────────────────────────────────────────────
+  // ── OEM supply chain risk score ──────────────────────────────────────────
+  const [oemScore, setOemScore] = useState<SupplyChainRiskScore | null>(null);
+
+  // Subscribe to WebSocket-pushed OEM score updates via react-query cache
+  useEffect(() => {
+    const unsub = queryClient.getQueryCache().subscribe((event) => {
+      if (
+        event?.type === "updated" &&
+        event.query.queryKey[0] === "oem-risk-score"
+      ) {
+        const data = event.query.state.data as SupplyChainRiskScore | undefined;
+        if (data) setOemScore(data);
+      }
+    });
+    return unsub;
+  }, [queryClient]);
+
+  // ── Load suppliers + OEM score on mount ──────────────────────────────────
   useEffect(() => {
     let cancelled = false;
     suppliersApi
@@ -569,6 +589,12 @@ export function NewsRiskDashboard() {
       .finally(() => {
         if (!cancelled) setLoadingSuppliers(false);
       });
+    risksApi
+      .getSupplyChainScore()
+      .then((data) => {
+        if (!cancelled) setOemScore(data ?? null);
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -672,8 +698,84 @@ export function NewsRiskDashboard() {
       )
     : allRisks;
 
+  const oemRiskLevel = oemScore
+    ? oemScore.overallScore <= 25
+      ? "LOW"
+      : oemScore.overallScore <= 50
+        ? "MEDIUM"
+        : oemScore.overallScore <= 75
+          ? "HIGH"
+          : "CRITICAL"
+    : null;
+
+  const oemLevelColors: Record<string, { bg: string; text: string; border: string; bar: string }> = {
+    LOW: { bg: "bg-green-100 dark:bg-green-900/30", text: "text-green-800 dark:text-green-400", border: "border-green-200 dark:border-green-800", bar: "bg-green-500" },
+    MEDIUM: { bg: "bg-yellow-100 dark:bg-yellow-900/30", text: "text-yellow-800 dark:text-yellow-400", border: "border-yellow-200 dark:border-yellow-800", bar: "bg-yellow-500" },
+    HIGH: { bg: "bg-orange-100 dark:bg-orange-900/30", text: "text-orange-800 dark:text-orange-400", border: "border-orange-200 dark:border-orange-800", bar: "bg-orange-500" },
+    CRITICAL: { bg: "bg-red-100 dark:bg-red-900/30", text: "text-red-800 dark:text-red-400", border: "border-red-200 dark:border-red-800", bar: "bg-red-500" },
+  };
+
   return (
-    <main className="mx-auto grid grid-cols-1 gap-6 lg:grid-cols-[minmax(260px,320px)_1fr]">
+    <div className="mx-auto flex flex-col gap-6">
+      {/* ── OEM Risk Summary Banner ──────────────────────────────────────── */}
+      {oemScore && oemRiskLevel && (
+        <section className="rounded-2xl border border-light-gray dark:border-gray-600 bg-white dark:bg-gray-800 p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3 mb-2">
+                <h3 className="text-[12px] font-semibold uppercase tracking-wide text-medium-gray dark:text-gray-400">
+                  Supply Chain Risk Score
+                </h3>
+                <span
+                  className={`rounded-lg border px-2.5 py-1 text-[12px] font-semibold ${oemLevelColors[oemRiskLevel].bg} ${oemLevelColors[oemRiskLevel].text} ${oemLevelColors[oemRiskLevel].border}`}
+                >
+                  {oemRiskLevel}
+                </span>
+              </div>
+              <div className="flex items-baseline gap-2 mb-2">
+                <span className="text-[28px] font-bold text-dark-gray dark:text-gray-100">
+                  {oemScore.overallScore.toFixed(1)}
+                </span>
+                <span className="text-[13px] text-medium-gray dark:text-gray-400">/100</span>
+              </div>
+              <div className="h-2 w-full max-w-md overflow-hidden rounded-full bg-light-gray/50 dark:bg-gray-700 mb-3">
+                <div
+                  className={`h-full rounded-full transition-all ${oemLevelColors[oemRiskLevel].bar}`}
+                  style={{ width: `${Math.max(4, Math.min(100, oemScore.overallScore))}%` }}
+                />
+              </div>
+              {oemScore.summary && (
+                <p className="text-[13px] leading-relaxed text-dark-gray/80 dark:text-gray-300">
+                  {oemScore.summary}
+                </p>
+              )}
+            </div>
+            {oemScore.severityCounts && (
+              <div className="flex gap-3 text-center shrink-0">
+                {(["critical", "high", "medium", "low"] as const).map((sev) => {
+                  const count = oemScore.severityCounts?.[sev] ?? 0;
+                  if (count === 0) return null;
+                  const dotColor = sev === "critical" ? "bg-red-500" : sev === "high" ? "bg-orange-500" : sev === "medium" ? "bg-yellow-500" : "bg-green-500";
+                  return (
+                    <div key={sev} className="flex flex-col items-center gap-0.5">
+                      <span className={`h-2 w-2 rounded-full ${dotColor}`} />
+                      <span className="text-[16px] font-semibold text-dark-gray dark:text-gray-200">{count}</span>
+                      <span className="text-[10px] uppercase text-medium-gray dark:text-gray-400">{sev}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          {oemScore.createdAt && (
+            <p className="mt-2 text-[11px] text-medium-gray dark:text-gray-500">
+              Last updated {formatDistanceToNow(new Date(oemScore.createdAt), { addSuffix: true })}
+            </p>
+          )}
+        </section>
+      )}
+
+    <main className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(260px,320px)_1fr]">
       {/* ── Left: Supplier list ──────────────────────────────────────────── */}
       <section className="rounded-2xl border border-light-gray dark:border-gray-600 bg-white dark:bg-gray-800 p-4 shadow-sm">
         <div className="mb-3 flex items-center justify-between">
@@ -1111,5 +1213,6 @@ export function NewsRiskDashboard() {
         )}
       </section>
     </main>
+    </div>
   );
 }
