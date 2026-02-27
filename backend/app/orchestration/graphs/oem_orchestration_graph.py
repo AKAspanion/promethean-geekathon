@@ -74,7 +74,8 @@ from app.services.risks import create_risk_from_dict
 from app.services.suppliers import (
     get_all as get_suppliers,
     get_risks_by_supplier,
-    get_swarm_summaries_by_supplier,
+    get_latest_swarm_by_supplier,
+    _build_swarm_summary_for_supplier,
 )
 from app.services.websocket_manager import (
     broadcast_agent_status,
@@ -224,7 +225,7 @@ async def _broadcast_suppliers(db: Session, oem_id: UUID) -> None:
     if not suppliers:
         return
     risk_map = get_risks_by_supplier(db)
-    swarm_map = get_swarm_summaries_by_supplier(db, oem_id)
+    swarm_map = get_latest_swarm_by_supplier(db, oem_id)
     payload = [
         {
             "id": str(s.id),
@@ -247,7 +248,7 @@ async def _broadcast_suppliers(db: Session, oem_id: UUID) -> None:
             "riskSummary": risk_map.get(
                 s.name, {"count": 0, "bySeverity": {}, "latest": None}
             ),
-            "swarm": swarm_map.get(s.name),
+            "swarm": swarm_map.get(s.id),
         }
         for s in suppliers
     ]
@@ -373,24 +374,43 @@ async def _process_next_supplier(
                 )
                 .all()
             )
-            db.add(
-                SupplierRiskAnalysis(
-                    oemId=oem_id,
-                    workflowRunId=workflow_run_id,
-                    supplierId=supplier_id_uuid,
-                    riskScore=unified_score,
-                    risks=[str(r.id) for r in supplier_risk_rows],
-                    description=(
-                        f"Supplier risk score for {label} "
-                        f"in workflow run {workflow_run_id}"
-                    ),
-                    metadata_={
-                        "severityCounts": severity_counts,
-                        "domainScores": domain_scores,
-                    },
-                )
+            sra = SupplierRiskAnalysis(
+                oemId=oem_id,
+                workflowRunId=workflow_run_id,
+                supplierId=supplier_id_uuid,
+                riskScore=unified_score,
+                risks=[str(r.id) for r in supplier_risk_rows],
+                description=(
+                    f"Supplier risk score for {label} "
+                    f"in workflow run {workflow_run_id}"
+                ),
+                metadata_={
+                    "severityCounts": severity_counts,
+                    "domainScores": domain_scores,
+                },
             )
+            db.add(sra)
             db.commit()
+
+            # ── 4b. Swarm analysis (rule-based from domain agent risks) ────
+            from app.models.swarm_analysis import SwarmAnalysis
+
+            fallback = _build_swarm_summary_for_supplier(supplier_risk_rows)
+            if fallback:
+                db.add(SwarmAnalysis(
+                    supplierRiskAnalysisId=sra.id,
+                    supplierId=supplier_id_uuid,
+                    oemId=oem_id,
+                    finalScore=fallback["finalScore"],
+                    riskLevel=fallback["riskLevel"],
+                    topDrivers=fallback["topDrivers"],
+                    mitigationPlan=fallback["mitigationPlan"],
+                    agents=fallback["agents"],
+                    llmRawResponse=None,
+                    metadata_={"scoringMethod": "rule_based"},
+                ))
+                db.commit()
+
             break
 
     # ── 5. Partial WebSocket broadcast ─────────────────────────────────────────

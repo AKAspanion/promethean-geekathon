@@ -18,7 +18,7 @@ from app.services.suppliers import (
     get_all as get_suppliers,
     get_by_id as get_supplier_by_id,
     get_risks_by_supplier,
-    get_swarm_summaries_by_supplier,
+    get_latest_swarm_by_supplier,
 )
 from app.services.risks import create_risk_from_dict
 from app.services.opportunities import create_opportunity_from_dict
@@ -487,7 +487,7 @@ async def _broadcast_suppliers_for_oem(db: Session, oem_id: UUID) -> None:
     if not suppliers:
         return
     risk_map = get_risks_by_supplier(db)
-    swarm_map = get_swarm_summaries_by_supplier(db, oem_id)
+    swarm_map = get_latest_swarm_by_supplier(db, oem_id)
     suppliers_payload = [
         {
             "id": str(s.id),
@@ -515,7 +515,7 @@ async def _broadcast_suppliers_for_oem(db: Session, oem_id: UUID) -> None:
                     "latest": None,
                 },
             ),
-            "swarm": swarm_map.get(s.name),
+            "swarm": swarm_map.get(s.id),
         }
         for s in suppliers
     ]

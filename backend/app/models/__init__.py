@@ -13,6 +13,7 @@ from app.models.shipping_supplier import ShippingSupplier
 from app.models.shipment import Shipment
 from app.models.shipping_risk_assessment import ShippingRiskAssessment
 from app.models.trend_insight import TrendInsight
+from app.models.swarm_analysis import SwarmAnalysis
 
 __all__ = [
     "Oem",
@@ -36,4 +37,5 @@ __all__ = [
     "Shipment",
     "ShippingRiskAssessment",
     "TrendInsight",
+    "SwarmAnalysis",
 ]

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.models.supplier import Supplier
 from app.models.risk import Risk, RiskSeverity, RiskStatus
+from app.models.swarm_analysis import SwarmAnalysis
 
 
 def _parse_csv_line(line: str) -> list[str]:
@@ -408,65 +409,32 @@ def _build_swarm_summary_for_supplier(risks: List[Risk]) -> Optional[dict]:
     }
 
 
-def get_swarm_summaries_by_supplier(
-    db: Session, oem_id: Optional[UUID] = None
-) -> Dict[str, dict]:
+def get_latest_swarm_by_supplier(
+    db: Session, oem_id: UUID
+) -> Dict[UUID, dict]:
     """
-    Compute Swarm Controller style outputs per supplier using existing Risk rows.
+    Return a mapping of supplier_id -> latest persisted swarm analysis dict.
 
-    Resolves risks to supplier names via affectedSupplier/affectedSuppliers
-    first, then falls back to the supplierId FK for risks where the LLM
-    returned a null affectedSupplier (e.g. global-context news risks).
+    Queries the swarm_analysis table, returning the most recent
+    SwarmAnalysis per supplier.  Keyed by supplier UUID (not name).
     """
-    q = db.query(Risk).filter(Risk.status == RiskStatus.DETECTED)
-    if oem_id:
-        q = q.filter(Risk.oemId == oem_id)
-    risks = q.order_by(Risk.createdAt.desc()).all()
+    rows = (
+        db.query(SwarmAnalysis)
+        .filter(SwarmAnalysis.oemId == oem_id)
+        .order_by(SwarmAnalysis.createdAt.desc())
+        .all()
+    )
 
-    # Build a supplierId -> supplier name lookup for risks missing affectedSupplier
-    supplier_ids_needing_name: set = set()
-    for r in risks:
-        has_name = bool(
-            getattr(r, "affectedSuppliers", None)
-            or (r.affectedSupplier and r.affectedSupplier.strip())
-        )
-        if not has_name and r.supplierId:
-            supplier_ids_needing_name.add(r.supplierId)
+    result: Dict[UUID, dict] = {}
+    for sa in rows:
+        if sa.supplierId in result:
+            continue  # already have a newer one
+        result[sa.supplierId] = {
+            "finalScore": float(sa.finalScore) if sa.finalScore is not None else 0,
+            "riskLevel": sa.riskLevel,
+            "topDrivers": sa.topDrivers or [],
+            "mitigationPlan": sa.mitigationPlan or [],
+            "agents": sa.agents or [],
+        }
 
-    supplier_id_to_name: Dict[str, str] = {}
-    if supplier_ids_needing_name:
-        rows = (
-            db.query(Supplier.id, Supplier.name)
-            .filter(Supplier.id.in_(supplier_ids_needing_name))
-            .all()
-        )
-        for row in rows:
-            supplier_id_to_name[str(row.id)] = row.name
-
-    grouped: Dict[str, List[Risk]] = {}
-    for r in risks:
-        names: list[str] = []
-        if getattr(r, "affectedSuppliers", None):
-            names = [
-                (str(n).strip()) for n in (r.affectedSuppliers or []) if str(n).strip()
-            ]
-        elif r.affectedSupplier:
-            names = [r.affectedSupplier.strip()]
-
-        # Fallback: resolve via supplierId when name fields are empty
-        if not names and r.supplierId:
-            resolved = supplier_id_to_name.get(str(r.supplierId))
-            if resolved:
-                names = [resolved]
-
-        for key in names:
-            if not key:
-                continue
-            grouped.setdefault(key, []).append(r)
-
-    out: Dict[str, dict] = {}
-    for supplier_name, supplier_risks in grouped.items():
-        summary = _build_swarm_summary_for_supplier(supplier_risks)
-        if summary:
-            out[supplier_name] = summary
-    return out
+    return result

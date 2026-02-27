@@ -71,7 +71,7 @@ from app.services.risks import create_risk_from_dict
 from app.services.suppliers import (
     get_all as get_suppliers,
     get_risks_by_supplier,
-    get_swarm_summaries_by_supplier,
+    get_latest_swarm_by_supplier,
 )
 from app.services.websocket_manager import (
     broadcast_agent_status,
@@ -234,6 +234,187 @@ async def _llm_risk_score(
         return fallback_score, f"LLM error — used algorithmic fallback: {exc}"
 
 
+# -- LLM swarm analysis --------------------------------------------------------
+
+_SWARM_ANALYSIS_PROMPT = ChatPromptTemplate.from_template(
+    """You are a supply chain risk analyst performing a multi-agent swarm analysis.
+You have access to risks detected by three domain agents: WEATHER, SHIPPING, and NEWS.
+For each agent, evaluate the risks and produce a structured analysis.
+
+Supplier: {supplier_name}
+OEM: {oem_name}
+Overall risk score (already computed): {risk_score}
+Overall risk level: {risk_level}
+
+=== WEATHER RISKS ===
+{weather_risks_json}
+
+=== SHIPPING RISKS ===
+{shipping_risks_json}
+
+=== NEWS RISKS ===
+{news_risks_json}
+
+Analyze all risks above and produce a JSON object with this EXACT structure:
+
+{{
+  "finalScore": <number 0-100, should closely align with the overall risk score {risk_score}>,
+  "riskLevel": "<LOW|MEDIUM|HIGH|CRITICAL>",
+  "topDrivers": ["<top risk driver 1>", "<top risk driver 2>", "<top risk driver 3>"],
+  "mitigationPlan": [
+    "<specific, actionable mitigation step tailored to the detected risks>"
+  ],
+  "agents": [
+    {{
+      "agentType": "WEATHER",
+      "score": <0-100 score based on weather risks>,
+      "riskLevel": "<LOW|MEDIUM|HIGH|CRITICAL>",
+      "signals": ["<risk title 1>", "<risk title 2>"],
+      "interpretedRisks": ["<1-2 sentence interpretation of each key weather risk>"],
+      "confidence": <0.0-1.0, higher with more corroborating data>,
+      "metadata": {{"severityCounts": {{"low": 0, "medium": 0, "high": 0, "critical": 0}}, "riskCount": <number>}}
+    }},
+    {{
+      "agentType": "SHIPPING",
+      "score": <0-100>,
+      "riskLevel": "<LOW|MEDIUM|HIGH|CRITICAL>",
+      "signals": [],
+      "interpretedRisks": [],
+      "confidence": <0.0-1.0>,
+      "metadata": {{"severityCounts": {{}}, "riskCount": 0}}
+    }},
+    {{
+      "agentType": "NEWS",
+      "score": <0-100>,
+      "riskLevel": "<LOW|MEDIUM|HIGH|CRITICAL>",
+      "signals": [],
+      "interpretedRisks": [],
+      "confidence": <0.0-1.0>,
+      "metadata": {{"severityCounts": {{}}, "riskCount": 0}}
+    }}
+  ]
+}}
+
+Rules:
+- topDrivers: Pick the 3 most impactful risk titles across all agents, ordered by severity.
+- mitigationPlan: Generate 3-6 specific, actionable mitigation steps tailored to the detected risks. Reference specific risk types, regions, or suppliers. Do NOT use generic boilerplate.
+- Per-agent scores: If an agent has zero risks, set score=0, riskLevel=LOW, confidence=0.
+- Confidence: More risks with consistent signals = higher confidence. Single risk ~0.5, three+ consistent risks 0.7-0.9.
+- The finalScore should closely match the pre-computed score of {risk_score}.
+
+Respond ONLY with the JSON object, no other text."""
+)
+
+
+async def _llm_swarm_analysis(
+    risk_dicts: list[dict],
+    supplier_name: str,
+    oem_name: str,
+    risk_score: float,
+    risk_level: str,
+) -> tuple[dict, str] | None:
+    """
+    Call the LLM to produce a full swarm analysis breakdown.
+
+    Returns ``(swarm_dict, raw_response)`` or ``None`` if the LLM is
+    unavailable or the response cannot be parsed.
+    """
+    llm = get_chat_model()
+    if llm is None:
+        return None
+
+    weather_risks = [r for r in risk_dicts if r.get("sourceType") == "weather"]
+    shipping_risks = [
+        r for r in risk_dicts if r.get("sourceType") in ("traffic", "shipping")
+    ]
+    news_risks = [
+        r for r in risk_dicts if r.get("sourceType") in ("news", "global_news")
+    ]
+
+    def _summarize(risks: list[dict], limit: int = 10) -> str:
+        if not risks:
+            return "(none)"
+        summaries = []
+        for r in risks[:limit]:
+            summaries.append({
+                "title": r.get("title", ""),
+                "description": r.get("description", ""),
+                "severity": r.get("severity", "medium"),
+                "affectedRegion": r.get("affectedRegion", ""),
+            })
+        return json.dumps(summaries, indent=2)
+
+    invoke_params = {
+        "supplier_name": supplier_name,
+        "oem_name": oem_name,
+        "risk_score": risk_score,
+        "risk_level": risk_level,
+        "weather_risks_json": _summarize(weather_risks),
+        "shipping_risks_json": _summarize(shipping_risks),
+        "news_risks_json": _summarize(news_risks),
+    }
+
+    provider = getattr(llm, "model_provider", None) or type(llm).__name__
+    model_name = getattr(llm, "model_name", None) or getattr(llm, "model", "unknown")
+    call_id = _uuid.uuid4().hex[:8]
+    start = time.perf_counter()
+
+    prompt_text = _SWARM_ANALYSIS_PROMPT.format(**invoke_params)
+
+    try:
+        chain = _SWARM_ANALYSIS_PROMPT | llm
+        msg = await chain.ainvoke(invoke_params)
+
+        elapsed = int((time.perf_counter() - start) * 1000)
+        content = msg.content
+        if isinstance(content, str):
+            raw_text = content
+        else:
+            parts: list[str] = []
+            for block in content:
+                if isinstance(block, dict) and "text" in block:
+                    parts.append(str(block.get("text") or ""))
+                else:
+                    parts.append(str(block))
+            raw_text = "".join(parts)
+
+        logger.info(
+            "[SwarmAnalysis] LLM response id=%s provider=%s elapsed_ms=%d len=%d",
+            call_id, provider, elapsed, len(raw_text),
+        )
+        _persist_llm_log(
+            call_id, provider, str(model_name),
+            str(prompt_text), raw_text, "success", elapsed, None,
+        )
+
+        parsed = _extract_score_json(raw_text)
+        if parsed and "agents" in parsed and "finalScore" in parsed:
+            parsed["finalScore"] = max(0.0, min(100.0, float(parsed["finalScore"])))
+            parsed["riskLevel"] = parsed.get("riskLevel", risk_level)
+            parsed["topDrivers"] = parsed.get("topDrivers", [])[:5]
+            parsed["mitigationPlan"] = parsed.get("mitigationPlan", [])[:8]
+            for agent in parsed.get("agents", []):
+                agent["score"] = max(0.0, min(100.0, float(agent.get("score", 0))))
+                agent["confidence"] = max(
+                    0.0, min(1.0, float(agent.get("confidence", 0.5)))
+                )
+            return parsed, raw_text
+
+        logger.warning(
+            "[SwarmAnalysis] Unparseable LLM response, raw=%s", raw_text[:200],
+        )
+        return None
+
+    except Exception as exc:
+        elapsed = int((time.perf_counter() - start) * 1000)
+        logger.exception("[SwarmAnalysis] LLM error: %s", exc)
+        _persist_llm_log(
+            call_id, provider, str(model_name),
+            str(prompt_text), None, "error", elapsed, str(exc),
+        )
+        return None
+
+
 # -- Status / broadcast helpers ------------------------------------------------
 
 def _update_status(
@@ -295,7 +476,7 @@ async def _broadcast_suppliers(db: Session, oem_id: UUID) -> None:
     if not suppliers:
         return
     risk_map = get_risks_by_supplier(db)
-    swarm_map = get_swarm_summaries_by_supplier(db, oem_id)
+    swarm_map = get_latest_swarm_by_supplier(db, oem_id)
     payload = [
         {
             "id": str(s.id),
@@ -318,7 +499,7 @@ async def _broadcast_suppliers(db: Session, oem_id: UUID) -> None:
             "riskSummary": risk_map.get(
                 s.name, {"count": 0, "bySeverity": {}, "latest": None}
             ),
-            "swarm": swarm_map.get(s.name),
+            "swarm": swarm_map.get(s.id),
         }
         for s in suppliers
     ]
@@ -495,27 +676,83 @@ async def _process_next_supplier(
             supplier.latestRiskLevel = risk_level
             db.commit()
 
-            db.add(
-                SupplierRiskAnalysis(
-                    oemId=oem_id,
-                    workflowRunId=workflow_run_id,
-                    supplierId=supplier_id_uuid,
-                    riskScore=unified_score,
-                    risks=[str(r.id) for r in top_risks],
-                    description=llm_reasoning or (
-                        f"Risk score for {label} "
-                        f"— top {len(top_risks)} risks"
-                    ),
-                    metadata_={
-                        "severityCounts": severity_counts,
-                        "domainScores": domain_scores,
-                        "topRiskIds": [str(r.id) for r in top_risks],
-                        "llmReasoning": llm_reasoning,
-                        "scoringMethod": "llm",
-                    },
-                )
+            sra = SupplierRiskAnalysis(
+                oemId=oem_id,
+                workflowRunId=workflow_run_id,
+                supplierId=supplier_id_uuid,
+                riskScore=unified_score,
+                risks=[str(r.id) for r in top_risks],
+                description=llm_reasoning or (
+                    f"Risk score for {label} "
+                    f"— top {len(top_risks)} risks"
+                ),
+                metadata_={
+                    "severityCounts": severity_counts,
+                    "domainScores": domain_scores,
+                    "topRiskIds": [str(r.id) for r in top_risks],
+                    "llmReasoning": llm_reasoning,
+                    "scoringMethod": "llm",
+                },
             )
+            db.add(sra)
             db.commit()
+
+            # -- 5b. LLM-based swarm analysis ---------------------------------
+            _update_status(
+                db, agent_status_id,
+                AgentStatus.ANALYZING.value,
+                f"Running swarm analysis for supplier: {label}",
+            )
+            await _broadcast_status(
+                db, agent_status_id,
+                supplier_name=supplier_name, oem_name=oem_name,
+            )
+
+            swarm_result = await _llm_swarm_analysis(
+                risk_dicts, label, oem_name or "",
+                unified_score, risk_level,
+            )
+
+            from app.models.swarm_analysis import SwarmAnalysis
+
+            if swarm_result is not None:
+                swarm_data, raw_response = swarm_result
+                db.add(SwarmAnalysis(
+                    supplierRiskAnalysisId=sra.id,
+                    supplierId=supplier_id_uuid,
+                    oemId=oem_id,
+                    finalScore=swarm_data["finalScore"],
+                    riskLevel=swarm_data["riskLevel"],
+                    topDrivers=swarm_data["topDrivers"],
+                    mitigationPlan=swarm_data["mitigationPlan"],
+                    agents=swarm_data["agents"],
+                    llmRawResponse=raw_response,
+                    metadata_={"scoringMethod": "llm"},
+                ))
+                db.commit()
+            else:
+                # Fallback: persist rule-based swarm analysis
+                from app.services.suppliers import (
+                    _build_swarm_summary_for_supplier,
+                )
+                fallback = _build_swarm_summary_for_supplier(
+                    supplier_risk_rows,
+                )
+                if fallback:
+                    db.add(SwarmAnalysis(
+                        supplierRiskAnalysisId=sra.id,
+                        supplierId=supplier_id_uuid,
+                        oemId=oem_id,
+                        finalScore=fallback["finalScore"],
+                        riskLevel=fallback["riskLevel"],
+                        topDrivers=fallback["topDrivers"],
+                        mitigationPlan=fallback["mitigationPlan"],
+                        agents=fallback["agents"],
+                        llmRawResponse=None,
+                        metadata_={"scoringMethod": "rule_based_fallback"},
+                    ))
+                    db.commit()
+
             break
 
     # -- 6. Update AgentStatusEntity counters ----------------------------------
