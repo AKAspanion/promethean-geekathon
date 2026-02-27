@@ -88,3 +88,44 @@ class OemOrchestrationState(TypedDict, total=False):
 
     # Set by generate_plans.
     plans_generated: int
+
+
+class RiskAnalysisSupplierResult(TypedDict):
+    """
+    Lightweight result for one supplier produced by the risk analysis pipeline.
+    Accumulated in RiskAnalysisState.supplier_results.
+    """
+
+    supplier_scope: OemScope
+    all_risks: list[dict]
+    all_opportunities: list[dict]
+    unified_score: float
+    risk_level: str
+    domain_scores: dict
+    top_risk_ids: list[str]
+
+
+class RiskAnalysisState(TypedDict, total=False):
+    """
+    State for RiskAnalysisGraph.
+
+    Processes every supplier for one OEM sequentially (safe for a single
+    shared SQLAlchemy session), running domain agents per supplier, then
+    aggregates an OEM-level risk score.
+
+    Currently runs only the news agent; weather and shipment agents will
+    be added in phase 2.
+    """
+
+    oem_id: str
+
+    # Supplier contexts consumed one at a time via a conditional loop.
+    remaining_contexts: list[SupplierWorkflowContext]
+    processed_contexts: list[SupplierWorkflowContext]
+
+    # Per-supplier summary results, accumulated in process_next_supplier.
+    supplier_results: list[RiskAnalysisSupplierResult]
+
+    # Set by aggregate_oem_score.
+    oem_risk_score: float
+    oem_risk_level: str
