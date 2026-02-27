@@ -1,5 +1,7 @@
 import json
 import logging
+import time
+import uuid as _uuid
 from typing import TypedDict, Literal
 from uuid import UUID
 
@@ -9,6 +11,7 @@ from langgraph.graph import StateGraph, END, START
 from app.database import SessionLocal
 from app.services.agent_orchestrator import _extract_json
 from app.services.langchain_llm import get_chat_model
+from app.services.llm_client import _persist_llm_log
 from app.services.agent_types import OemScope
 from app.services.oems import get_oem_by_id
 from app.services.suppliers import get_by_id as get_supplier_by_id
@@ -456,9 +459,22 @@ async def _news_risk_llm_node(state: NewsAgentState) -> NewsAgentState:
 
     chain = prompt | llm
 
+    # Derive provider/model for logging
+    provider = getattr(llm, "model_provider", None) or type(llm).__name__
+    model_name = getattr(llm, "model_name", None) or getattr(llm, "model", "unknown")
+    call_id = _uuid.uuid4().hex[:8]
+
+    items_json = json.dumps(items, indent=2)
+    prompt_text = prompt.format(news_items_json=items_json)
+    start = time.perf_counter()
+
     try:
-        items_json = json.dumps(items, indent=2)
+        logger.info(
+            "NewsAgent LLM request id=%s provider=%s model=%s context=%s prompt_len=%d",
+            call_id, provider, model_name, context, len(prompt_text),
+        )
         msg = await chain.ainvoke({"news_items_json": items_json})
+        elapsed = int((time.perf_counter() - start) * 1000)
 
         content = msg.content
         if isinstance(content, str):
@@ -471,6 +487,15 @@ async def _news_risk_llm_node(state: NewsAgentState) -> NewsAgentState:
                 else:
                     parts.append(str(block))
             raw_text = "".join(parts)
+
+        logger.info(
+            "NewsAgent LLM response id=%s provider=%s elapsed_ms=%d response_len=%d",
+            call_id, provider, elapsed, len(raw_text),
+        )
+        _persist_llm_log(
+            call_id, provider, str(model_name),
+            prompt_text, raw_text, "success", elapsed, None,
+        )
 
         parsed = _extract_json(raw_text) or {}
         raw_risks = parsed.get("risks") or []
@@ -499,7 +524,12 @@ async def _news_risk_llm_node(state: NewsAgentState) -> NewsAgentState:
 
         return {"news_risks": risks, "news_opportunities": opps}
     except Exception as exc:
+        elapsed = int((time.perf_counter() - start) * 1000)
         logger.exception("NewsAgent LLM error: %s", exc)
+        _persist_llm_log(
+            call_id, provider, str(model_name),
+            prompt_text, None, "error", elapsed, str(exc),
+        )
         return {"news_risks": [], "news_opportunities": []}
 
 
