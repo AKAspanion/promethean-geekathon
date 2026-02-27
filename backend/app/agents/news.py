@@ -389,7 +389,7 @@ def _build_supplier_prompt(
                     "Analyze the following news items in the context "
                     "of this OEM and supplier.\n\n"
                     f"=== Entity Context ===\n{entity_context}\n\n"
-                    "=== News Items ===\n{{news_items_json}}\n\n"
+                    "=== News Items ===\n{news_items_json}\n\n"
                     "Return JSON of shape:\n"
                     "{{\n"
                     '  "risks": [\n'
@@ -449,7 +449,7 @@ def _build_global_prompt(
                     "Analyze the following news items for global supply "
                     "chain risks relevant to this OEM and supplier.\n\n"
                     f"=== Entity Context ===\n{entity_context}\n\n"
-                    "=== News Items ===\n{{news_items_json}}\n\n"
+                    "=== News Items ===\n{news_items_json}\n\n"
                     "Return JSON of shape:\n"
                     "{{\n"
                     '  "risks": [\n'

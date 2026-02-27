@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 # LLM abstraction: we use Anthropic or Ollama via simple invoke(text) -> str
 _invoke_fn: Any = None
-_LLM_LOG_MAX_CHARS = 4000
 
 
 def _persist_llm_log(

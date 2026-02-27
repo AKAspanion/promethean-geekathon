@@ -28,7 +28,6 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_LLM_LOG_MAX_CHARS = 4000
 
 
 # ── Data classes ──────────────────────────────────────────────────────
@@ -586,8 +585,8 @@ def _persist_llm_log(
                 callId=call_id,
                 provider=provider,
                 model=model,
-                prompt=prompt[:_LLM_LOG_MAX_CHARS],
-                response=(response or "")[:_LLM_LOG_MAX_CHARS] if response else None,
+                prompt=prompt,
+                response=response,
                 status=status,
                 elapsedMs=elapsed_ms,
                 errorMessage=error_message,
