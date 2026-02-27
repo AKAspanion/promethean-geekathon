@@ -46,6 +46,8 @@ export interface AgentStatus {
   opportunitiesIdentified: number;
   plansGenerated: number;
   riskScore?: number | null;
+  supplierName?: string;
+  oemName?: string;
   lastUpdated: string;
   createdAt: string;
 }

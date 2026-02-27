@@ -31,7 +31,7 @@ function StreamingTaskText({ text }: { text: string }) {
     <div className="flex items-start gap-2 mb-4 min-h-6">
       <div className="shrink-0 -mt-0.5">
         {isStreaming ? (
-          <span className="relative flex h-2 w-2">
+          <span className="relative flex h-2 w-2 mt-[11px]">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-blue opacity-75" />
             <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-blue" />
           </span>
@@ -84,6 +84,27 @@ export function AgentStatus() {
 
   const triggerMutation = useMutation({
     mutationFn: agentApi.triggerAnalysisV2,
+    onMutate: () => {
+      // Clear previous logs and counters so the UI starts fresh
+      setTaskHistory([]);
+      setPrevTask(undefined);
+      queryClient.setQueryData<AgentStatusType | undefined>(
+        ['agent-status'],
+        (prev) =>
+          prev
+            ? {
+                ...prev,
+                status: 'analyzing' as const,
+                currentTask: undefined,
+                errorMessage: undefined,
+                risksDetected: 0,
+                opportunitiesIdentified: 0,
+                plansGenerated: 0,
+                lastUpdated: new Date().toISOString(),
+              }
+            : prev,
+      );
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['agent-status'] });
       queryClient.invalidateQueries({ queryKey: ['risks'] });

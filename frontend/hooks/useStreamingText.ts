@@ -53,5 +53,6 @@ export function useStreamingText(
   }, [text, charIntervalMs]);
 
   const isStreaming = displayed.length < (text?.length ?? 0);
-  return { displayed, isStreaming };
+  const output = text && !isStreaming ? `${displayed}...` : displayed;
+  return { displayed: output, isStreaming };
 }

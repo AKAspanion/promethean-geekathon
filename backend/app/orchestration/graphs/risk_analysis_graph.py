@@ -255,7 +255,12 @@ def _update_status(
     db.commit()
 
 
-async def _broadcast_status(db: Session, agent_status_id: UUID) -> None:
+async def _broadcast_status(
+    db: Session,
+    agent_status_id: UUID,
+    supplier_name: str | None = None,
+    oem_name: str | None = None,
+) -> None:
     ent = (
         db.query(AgentStatusEntity)
         .filter(AgentStatusEntity.id == agent_status_id)
@@ -263,23 +268,26 @@ async def _broadcast_status(db: Session, agent_status_id: UUID) -> None:
     )
     if not ent:
         return
-    await broadcast_agent_status(
-        {
-            "id": str(ent.id),
-            "status": ent.status,
-            "currentTask": ent.currentTask,
-            "lastProcessedData": ent.lastProcessedData,
-            "lastDataSource": ent.lastDataSource,
-            "errorMessage": ent.errorMessage,
-            "risksDetected": ent.risksDetected,
-            "opportunitiesIdentified": ent.opportunitiesIdentified,
-            "plansGenerated": ent.plansGenerated,
-            "lastUpdated": (
-                ent.lastUpdated.isoformat() if ent.lastUpdated else None
-            ),
-            "createdAt": ent.createdAt.isoformat() if ent.createdAt else None,
-        }
-    )
+    payload: dict = {
+        "id": str(ent.id),
+        "status": ent.status,
+        "currentTask": ent.currentTask,
+        "lastProcessedData": ent.lastProcessedData,
+        "lastDataSource": ent.lastDataSource,
+        "errorMessage": ent.errorMessage,
+        "risksDetected": ent.risksDetected,
+        "opportunitiesIdentified": ent.opportunitiesIdentified,
+        "plansGenerated": ent.plansGenerated,
+        "lastUpdated": (
+            ent.lastUpdated.isoformat() if ent.lastUpdated else None
+        ),
+        "createdAt": ent.createdAt.isoformat() if ent.createdAt else None,
+    }
+    if supplier_name:
+        payload["supplierName"] = supplier_name
+    if oem_name:
+        payload["oemName"] = oem_name
+    await broadcast_agent_status(payload)
 
 
 async def _broadcast_suppliers(db: Session, oem_id: UUID) -> None:
@@ -350,7 +358,9 @@ async def _process_next_supplier(
     agent_status_id = UUID(ctx["agent_status_id"])
     workflow_run_id = UUID(ctx["workflow_run_id"])
     supplier_id_uuid = UUID(scope["supplierId"]) if scope.get("supplierId") else None
-    label = scope.get("supplierName") or scope.get("oemName") or "unknown"
+    supplier_name = scope.get("supplierName") or None
+    oem_name = scope.get("oemName") or None
+    label = supplier_name or oem_name or "unknown"
 
     logger.info("RiskAnalysisGraph: starting supplier '%s'", label)
 
@@ -360,7 +370,7 @@ async def _process_next_supplier(
         AgentStatus.ANALYZING.value,
         f"[v2] Running risk analysis for supplier: {label}",
     )
-    await _broadcast_status(db, agent_status_id)
+    await _broadcast_status(db, agent_status_id, supplier_name=supplier_name, oem_name=oem_name)
 
     supplier_result, global_result = await asyncio.gather(
         run_news_agent_graph({}, scope, context="supplier"),
@@ -387,7 +397,7 @@ async def _process_next_supplier(
         AgentStatus.PROCESSING.value,
         f"[v2] Saving results for supplier: {label}",
     )
-    await _broadcast_status(db, agent_status_id)
+    await _broadcast_status(db, agent_status_id, supplier_name=supplier_name, oem_name=oem_name)
 
     for r in all_risks:
         r["oemId"] = oem_id
@@ -449,11 +459,10 @@ async def _process_next_supplier(
         AgentStatus.ANALYZING.value,
         f"[v2] Computing LLM risk score for supplier: {label}",
     )
-    await _broadcast_status(db, agent_status_id)
+    await _broadcast_status(db, agent_status_id, supplier_name=supplier_name, oem_name=oem_name)
 
-    oem_name = scope.get("oemName") or ""
     unified_score, llm_reasoning = await _llm_risk_score(
-        risk_dicts, label, oem_name,
+        risk_dicts, label, oem_name or "",
     )
     risk_level = score_to_level(unified_score)
 
@@ -652,13 +661,18 @@ async def _broadcast_complete(
     oem_id = UUID(state["oem_id"])
 
     for ctx in state.get("processed_contexts") or []:
+        scope: OemScope = ctx["scope"]
         _update_status(
             db,
             UUID(ctx["agent_status_id"]),
             AgentStatus.COMPLETED.value,
             "[v2] Risk analysis completed",
         )
-        await _broadcast_status(db, UUID(ctx["agent_status_id"]))
+        await _broadcast_status(
+            db, UUID(ctx["agent_status_id"]),
+            supplier_name=scope.get("supplierName"),
+            oem_name=scope.get("oemName"),
+        )
 
     await _broadcast_suppliers(db, oem_id)
     return {}

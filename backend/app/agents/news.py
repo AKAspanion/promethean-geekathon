@@ -27,6 +27,8 @@ async def _broadcast_progress(
     message: str,
     context: str | None = None,
     details: dict | None = None,
+    oem_name: str | None = None,
+    supplier_name: str | None = None,
 ) -> None:
     """Broadcast a news agent progress event over websocket."""
     payload: dict = {
@@ -36,6 +38,10 @@ async def _broadcast_progress(
     }
     if context:
         payload["context"] = context
+    if oem_name:
+        payload["oemName"] = oem_name
+    if supplier_name:
+        payload["supplierName"] = supplier_name
     if details:
         payload["details"] = details
     await ws_manager.broadcast(payload)
@@ -174,6 +180,16 @@ def _gdelt_keywords(
     return base
 
 
+def _entity_names(state: NewsAgentState) -> tuple[str | None, str | None]:
+    """Return (oem_name, supplier_name) from state for broadcast payloads."""
+    oem = state.get("oem_data")
+    sup = state.get("supplier_data")
+    return (
+        oem.get("name") if oem else None,
+        sup.get("name") if sup else None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Parallel fetch nodes
 # ---------------------------------------------------------------------------
@@ -183,9 +199,10 @@ async def _fetch_newsapi_node(state: NewsAgentState) -> NewsAgentState:
     context = state.get("context", "supplier")
     oem_data = state.get("oem_data")
     supplier_data = state.get("supplier_data")
+    oem_name, supplier_name = _entity_names(state)
     keywords = _newsapi_keywords(oem_data, supplier_data)
     logger.info("[NewsAgent:%s] Fetching from NewsAPI with %d keywords", context, len(keywords))
-    await _broadcast_progress("fetch_newsapi", "Fetching articles from NewsAPI", context)
+    await _broadcast_progress("fetch_newsapi", "Fetching articles from NewsAPI", context, oem_name=oem_name, supplier_name=supplier_name)
     try:
         source = NewsDataSource()
         await source.initialize({})
@@ -194,11 +211,11 @@ async def _fetch_newsapi_node(state: NewsAgentState) -> NewsAgentState:
         logger.info("[NewsAgent:%s] NewsAPI returned %d articles", context, len(raw))
         await _broadcast_progress(
             "fetch_newsapi_done", f"NewsAPI returned {len(raw)} articles",
-            context, {"count": len(raw)},
+            context, {"count": len(raw)}, oem_name=oem_name, supplier_name=supplier_name,
         )
     except Exception as exc:
         logger.exception("[NewsAgent:%s] NewsAPI fetch error: %s", context, exc)
-        await _broadcast_progress("fetch_newsapi_error", f"NewsAPI error: {exc}", context)
+        await _broadcast_progress("fetch_newsapi_error", f"NewsAPI error: {exc}", context, oem_name=oem_name, supplier_name=supplier_name)
         raw = []
     return {"newsapi_raw": raw}
 
@@ -208,9 +225,10 @@ async def _fetch_gdelt_node(state: NewsAgentState) -> NewsAgentState:
     context = state.get("context", "supplier")
     oem_data = state.get("oem_data")
     supplier_data = state.get("supplier_data")
+    oem_name, supplier_name = _entity_names(state)
     keywords = _gdelt_keywords(oem_data, supplier_data)
     logger.info("[NewsAgent:%s] Fetching from GDELT with %d keywords", context, len(keywords))
-    await _broadcast_progress("fetch_gdelt", "Fetching articles from GDELT", context)
+    await _broadcast_progress("fetch_gdelt", "Fetching articles from GDELT", context, oem_name=oem_name, supplier_name=supplier_name)
     try:
         source = GDELTDataSource()
         await source.initialize({})
@@ -219,11 +237,11 @@ async def _fetch_gdelt_node(state: NewsAgentState) -> NewsAgentState:
         logger.info("[NewsAgent:%s] GDELT returned %d articles", context, len(raw))
         await _broadcast_progress(
             "fetch_gdelt_done", f"GDELT returned {len(raw)} articles",
-            context, {"count": len(raw)},
+            context, {"count": len(raw)}, oem_name=oem_name, supplier_name=supplier_name,
         )
     except Exception as exc:
         logger.exception("[NewsAgent:%s] GDELT fetch error: %s", context, exc)
-        await _broadcast_progress("fetch_gdelt_error", f"GDELT error: {exc}", context)
+        await _broadcast_progress("fetch_gdelt_error", f"GDELT error: {exc}", context, oem_name=oem_name, supplier_name=supplier_name)
         raw = []
     return {"gdelt_raw": raw}
 
@@ -238,6 +256,7 @@ async def _merge_news_node(state: NewsAgentState) -> NewsAgentState:
     Deduplicates by normalised title to avoid redundant LLM tokens.
     """
     context = state.get("context", "supplier")
+    oem_name, supplier_name = _entity_names(state)
     combined: list[dict] = []
 
     # Include legacy pre-fetched data passed from outside the graph
@@ -270,6 +289,7 @@ async def _merge_news_node(state: NewsAgentState) -> NewsAgentState:
     await _broadcast_progress(
         "merge_done", f"Merged {len(unique)} unique articles (from {len(combined)} total)",
         context, {"total": len(combined), "unique": len(unique)},
+        oem_name=oem_name, supplier_name=supplier_name,
     )
     # Store as a news_data dict so _build_news_items_node can consume it normally
     return {"news_data": {"news": unique}}
@@ -282,6 +302,7 @@ async def _merge_news_node(state: NewsAgentState) -> NewsAgentState:
 async def _build_news_items_node(state: NewsAgentState) -> NewsAgentState:
     """Normalize raw news data into NewsItem structures."""
     context = state.get("context", "supplier")
+    oem_name, supplier_name = _entity_names(state)
     raw = state.get("news_data") or {}
     items = raw.get("news") or []
 
@@ -305,6 +326,7 @@ async def _build_news_items_node(state: NewsAgentState) -> NewsAgentState:
     await _broadcast_progress(
         "items_ready", f"Prepared {len(normalized)} articles for analysis",
         context, {"count": len(normalized)},
+        oem_name=oem_name, supplier_name=supplier_name,
     )
     return {"news_items": normalized}
 
@@ -497,6 +519,7 @@ async def _news_risk_llm_node(state: NewsAgentState) -> NewsAgentState:
     context = state.get("context", "supplier") or "supplier"
     oem_data = state.get("oem_data")
     supplier_data = state.get("supplier_data")
+    oem_name, supplier_name = _entity_names(state)
 
     if context == "supplier":
         prompt = _build_supplier_prompt(oem_data, supplier_data)
@@ -522,6 +545,7 @@ async def _news_risk_llm_node(state: NewsAgentState) -> NewsAgentState:
         await _broadcast_progress(
             "llm_start", f"Running {context} risk extraction via {provider}",
             context, {"call_id": call_id, "provider": provider, "model": str(model_name)},
+            oem_name=oem_name, supplier_name=supplier_name,
         )
         msg = await chain.ainvoke({"news_items_json": items_json})
         elapsed = int((time.perf_counter() - start) * 1000)
@@ -579,6 +603,7 @@ async def _news_risk_llm_node(state: NewsAgentState) -> NewsAgentState:
         await _broadcast_progress(
             "llm_done", f"Extracted {len(risks)} risks and {len(opps)} opportunities",
             context, {"risks": len(risks), "opportunities": len(opps), "elapsed_ms": elapsed},
+            oem_name=oem_name, supplier_name=supplier_name,
         )
         return {"news_risks": risks, "news_opportunities": opps}
     except Exception as exc:
@@ -588,7 +613,7 @@ async def _news_risk_llm_node(state: NewsAgentState) -> NewsAgentState:
             call_id, provider, str(model_name),
             prompt_text, None, "error", elapsed, str(exc),
         )
-        await _broadcast_progress("llm_error", f"LLM error: {exc}", context)
+        await _broadcast_progress("llm_error", f"LLM error: {exc}", context, oem_name=oem_name, supplier_name=supplier_name)
         return {"news_risks": [], "news_opportunities": []}
 
 
@@ -677,6 +702,7 @@ async def run_news_agent_graph(
     await _broadcast_progress(
         "started", f"Starting {context} news analysis for {entity_label}",
         context, {"oem": oem_label, "supplier": sup_label},
+        oem_name=oem_label, supplier_name=sup_label,
     )
 
     initial_state: NewsAgentState = {
@@ -735,6 +761,7 @@ async def run_news_agent_graph(
         f"Completed {context} analysis: {len(risks_for_db)} risks, {len(opps_for_db)} opportunities",
         context,
         {"risks": len(risks_for_db), "opportunities": len(opps_for_db)},
+        oem_name=oem_label, supplier_name=sup_label,
     )
 
     return {"risks": risks_for_db, "opportunities": opps_for_db}

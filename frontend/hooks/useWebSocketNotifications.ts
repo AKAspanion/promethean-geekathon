@@ -20,6 +20,8 @@ type NewsAgentProgressMessage = {
   step: string;
   message: string;
   context?: string;
+  oemName?: string;
+  supplierName?: string;
   details?: Record<string, unknown>;
 };
 
@@ -53,6 +55,8 @@ export function useWebSocketNotifications() {
           console.log('[WS] agent_status', {
             status: data.status.status,
             currentTask: data.status.currentTask,
+            supplierName: data.status.supplierName,
+            oemName: data.status.oemName,
             risksDetected: data.status.risksDetected,
             opportunitiesIdentified: data.status.opportunitiesIdentified,
             plansGenerated: data.status.plansGenerated,
@@ -80,6 +84,8 @@ export function useWebSocketNotifications() {
             step: data.step,
             message: data.message,
             context: data.context,
+            supplierName: data.supplierName,
+            oemName: data.oemName,
             details: data.details,
           });
           // Merge into agent-status so AgentStatus component shows progress
@@ -88,10 +94,13 @@ export function useWebSocketNotifications() {
             (prev) => {
               if (!prev) return prev;
               const isCompleted = data.step === 'completed';
+              const label = data.supplierName
+                ? `[News - ${data.supplierName}]`
+                : '[News]';
               return {
                 ...prev,
                 status: isCompleted ? 'completed' : 'analyzing',
-                currentTask: `[News] ${data.message}`,
+                currentTask: `${label} ${data.message}`,
                 lastUpdated: new Date().toISOString(),
                 // Update counters when the news agent completes
                 ...(isCompleted && data.details
