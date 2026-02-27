@@ -1,0 +1,23 @@
+name: Deploy Mock Server
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mock-server/**'
+
+jobs:
+  deploy:
+    name: Deploy Mock Server (Express)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy
+        working-directory: ./mock-server
+        run: railway up --detach
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_MOCK_SERVER_TOKEN }}
