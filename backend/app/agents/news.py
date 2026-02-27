@@ -15,10 +15,30 @@ from app.services.llm_client import _persist_llm_log
 from app.services.agent_types import OemScope
 from app.services.oems import get_oem_by_id
 from app.services.suppliers import get_by_id as get_supplier_by_id
+from app.services.websocket_manager import manager as ws_manager
 from app.data.news import NewsDataSource
 from app.data.gdelt import GDELTDataSource
 
 logger = logging.getLogger(__name__)
+
+
+async def _broadcast_progress(
+    step: str,
+    message: str,
+    context: str | None = None,
+    details: dict | None = None,
+) -> None:
+    """Broadcast a news agent progress event over websocket."""
+    payload: dict = {
+        "type": "news_agent_progress",
+        "step": step,
+        "message": message,
+    }
+    if context:
+        payload["context"] = context
+    if details:
+        payload["details"] = details
+    await ws_manager.broadcast(payload)
 
 
 class NewsItem(TypedDict):
@@ -160,34 +180,50 @@ def _gdelt_keywords(
 
 async def _fetch_newsapi_node(state: NewsAgentState) -> NewsAgentState:
     """Fetch articles from NewsAPI.org."""
+    context = state.get("context", "supplier")
     oem_data = state.get("oem_data")
     supplier_data = state.get("supplier_data")
     keywords = _newsapi_keywords(oem_data, supplier_data)
+    logger.info("[NewsAgent:%s] Fetching from NewsAPI with %d keywords", context, len(keywords))
+    await _broadcast_progress("fetch_newsapi", "Fetching articles from NewsAPI", context)
     try:
         source = NewsDataSource()
         await source.initialize({})
         results = await source.fetch_data({"keywords": keywords})
         raw = [r.to_dict() for r in results]
-        logger.info("fetch_newsapi_node: fetched %d articles", len(raw))
+        logger.info("[NewsAgent:%s] NewsAPI returned %d articles", context, len(raw))
+        await _broadcast_progress(
+            "fetch_newsapi_done", f"NewsAPI returned {len(raw)} articles",
+            context, {"count": len(raw)},
+        )
     except Exception as exc:
-        logger.exception("fetch_newsapi_node error: %s", exc)
+        logger.exception("[NewsAgent:%s] NewsAPI fetch error: %s", context, exc)
+        await _broadcast_progress("fetch_newsapi_error", f"NewsAPI error: {exc}", context)
         raw = []
     return {"newsapi_raw": raw}
 
 
 async def _fetch_gdelt_node(state: NewsAgentState) -> NewsAgentState:
     """Fetch geopolitical event articles from GDELT (no API key required)."""
+    context = state.get("context", "supplier")
     oem_data = state.get("oem_data")
     supplier_data = state.get("supplier_data")
     keywords = _gdelt_keywords(oem_data, supplier_data)
+    logger.info("[NewsAgent:%s] Fetching from GDELT with %d keywords", context, len(keywords))
+    await _broadcast_progress("fetch_gdelt", "Fetching articles from GDELT", context)
     try:
         source = GDELTDataSource()
         await source.initialize({})
         results = await source.fetch_data({"keywords": keywords})
         raw = [r.to_dict() for r in results]
-        logger.info("fetch_gdelt_node: fetched %d articles", len(raw))
+        logger.info("[NewsAgent:%s] GDELT returned %d articles", context, len(raw))
+        await _broadcast_progress(
+            "fetch_gdelt_done", f"GDELT returned {len(raw)} articles",
+            context, {"count": len(raw)},
+        )
     except Exception as exc:
-        logger.exception("fetch_gdelt_node error: %s", exc)
+        logger.exception("[NewsAgent:%s] GDELT fetch error: %s", context, exc)
+        await _broadcast_progress("fetch_gdelt_error", f"GDELT error: {exc}", context)
         raw = []
     return {"gdelt_raw": raw}
 
@@ -196,11 +232,12 @@ async def _fetch_gdelt_node(state: NewsAgentState) -> NewsAgentState:
 # Merge node — fan-in after parallel fetches
 # ---------------------------------------------------------------------------
 
-def _merge_news_node(state: NewsAgentState) -> NewsAgentState:
+async def _merge_news_node(state: NewsAgentState) -> NewsAgentState:
     """
     Combine articles from all sources + any pre-fetched news_data.
     Deduplicates by normalised title to avoid redundant LLM tokens.
     """
+    context = state.get("context", "supplier")
     combined: list[dict] = []
 
     # Include legacy pre-fetched data passed from outside the graph
@@ -227,9 +264,12 @@ def _merge_news_node(state: NewsAgentState) -> NewsAgentState:
         unique.append(item)
 
     logger.info(
-        "_merge_news_node: %d total → %d unique articles after dedup",
-        len(combined),
-        len(unique),
+        "[NewsAgent:%s] Merged %d total -> %d unique articles after dedup",
+        context, len(combined), len(unique),
+    )
+    await _broadcast_progress(
+        "merge_done", f"Merged {len(unique)} unique articles (from {len(combined)} total)",
+        context, {"total": len(combined), "unique": len(unique)},
     )
     # Store as a news_data dict so _build_news_items_node can consume it normally
     return {"news_data": {"news": unique}}
@@ -239,8 +279,9 @@ def _merge_news_node(state: NewsAgentState) -> NewsAgentState:
 # Build news items node
 # ---------------------------------------------------------------------------
 
-def _build_news_items_node(state: NewsAgentState) -> NewsAgentState:
+async def _build_news_items_node(state: NewsAgentState) -> NewsAgentState:
     """Normalize raw news data into NewsItem structures."""
+    context = state.get("context", "supplier")
     raw = state.get("news_data") or {}
     items = raw.get("news") or []
 
@@ -260,6 +301,11 @@ def _build_news_items_node(state: NewsAgentState) -> NewsAgentState:
                 "content": data.get("content"),
             }
         )
+    logger.info("[NewsAgent:%s] Normalized %d news items for LLM", context, len(normalized))
+    await _broadcast_progress(
+        "items_ready", f"Prepared {len(normalized)} articles for analysis",
+        context, {"count": len(normalized)},
+    )
     return {"news_items": normalized}
 
 
@@ -470,8 +516,12 @@ async def _news_risk_llm_node(state: NewsAgentState) -> NewsAgentState:
 
     try:
         logger.info(
-            "NewsAgent LLM request id=%s provider=%s model=%s context=%s prompt_len=%d",
-            call_id, provider, model_name, context, len(prompt_text),
+            "[NewsAgent:%s] LLM request id=%s provider=%s model=%s prompt_len=%d",
+            context, call_id, provider, model_name, len(prompt_text),
+        )
+        await _broadcast_progress(
+            "llm_start", f"Running {context} risk extraction via {provider}",
+            context, {"call_id": call_id, "provider": provider, "model": str(model_name)},
         )
         msg = await chain.ainvoke({"news_items_json": items_json})
         elapsed = int((time.perf_counter() - start) * 1000)
@@ -489,8 +539,8 @@ async def _news_risk_llm_node(state: NewsAgentState) -> NewsAgentState:
             raw_text = "".join(parts)
 
         logger.info(
-            "NewsAgent LLM response id=%s provider=%s elapsed_ms=%d response_len=%d",
-            call_id, provider, elapsed, len(raw_text),
+            "[NewsAgent:%s] LLM response id=%s provider=%s elapsed_ms=%d response_len=%d",
+            context, call_id, provider, elapsed, len(raw_text),
         )
         _persist_llm_log(
             call_id, provider, str(model_name),
@@ -522,14 +572,23 @@ async def _news_risk_llm_node(state: NewsAgentState) -> NewsAgentState:
                 continue
             opps.append(o)
 
+        logger.info(
+            "[NewsAgent:%s] LLM extraction complete: risks=%d opportunities=%d elapsed_ms=%d",
+            context, len(risks), len(opps), elapsed,
+        )
+        await _broadcast_progress(
+            "llm_done", f"Extracted {len(risks)} risks and {len(opps)} opportunities",
+            context, {"risks": len(risks), "opportunities": len(opps), "elapsed_ms": elapsed},
+        )
         return {"news_risks": risks, "news_opportunities": opps}
     except Exception as exc:
         elapsed = int((time.perf_counter() - start) * 1000)
-        logger.exception("NewsAgent LLM error: %s", exc)
+        logger.exception("[NewsAgent:%s] LLM error: %s", context, exc)
         _persist_llm_log(
             call_id, provider, str(model_name),
             prompt_text, None, "error", elapsed, str(exc),
         )
+        await _broadcast_progress("llm_error", f"LLM error: {exc}", context)
         return {"news_risks": [], "news_opportunities": []}
 
 
@@ -610,6 +669,16 @@ async def run_news_agent_graph(
     """
     oem_data, supplier_data = _resolve_entity_data(scope)
 
+    oem_label = (oem_data or {}).get("name") or scope.get("oemName") or "unknown"
+    sup_label = (supplier_data or {}).get("name") if supplier_data else None
+    entity_label = f"{oem_label}/{sup_label}" if sup_label else oem_label
+
+    logger.info("[NewsAgent:%s] Starting news graph for %s", context, entity_label)
+    await _broadcast_progress(
+        "started", f"Starting {context} news analysis for {entity_label}",
+        context, {"oem": oem_label, "supplier": sup_label},
+    )
+
     initial_state: NewsAgentState = {
         "scope": scope,
         "news_data": news_data,
@@ -656,5 +725,16 @@ async def run_news_agent_graph(
             "sourceData": {"context": context},
         }
         opps_for_db.append(db_opp)
+
+    logger.info(
+        "[NewsAgent:%s] Completed: risks=%d opportunities=%d for %s",
+        context, len(risks_for_db), len(opps_for_db), entity_label,
+    )
+    await _broadcast_progress(
+        "completed",
+        f"Completed {context} analysis: {len(risks_for_db)} risks, {len(opps_for_db)} opportunities",
+        context,
+        {"risks": len(risks_for_db), "opportunities": len(opps_for_db)},
+    )
 
     return {"risks": risks_for_db, "opportunities": opps_for_db}
