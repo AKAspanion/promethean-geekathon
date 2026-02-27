@@ -1,13 +1,17 @@
 import json
 import logging
 from typing import TypedDict, Literal
+from uuid import UUID
 
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END, START
 
+from app.database import SessionLocal
 from app.services.agent_orchestrator import _extract_json
 from app.services.langchain_llm import get_chat_model
 from app.services.agent_types import OemScope
+from app.services.oems import get_oem_by_id
+from app.services.suppliers import get_by_id as get_supplier_by_id
 from app.data.news import NewsDataSource
 from app.data.gdelt import GDELTDataSource
 
@@ -24,9 +28,24 @@ class NewsItem(TypedDict):
     content: str | None
 
 
+class EntityData(TypedDict, total=False):
+    """Flat dict holding key attributes of an OEM or Supplier."""
+    id: str
+    name: str
+    location: str | None
+    city: str | None
+    country: str | None
+    countryCode: str | None
+    region: str | None
+    commodities: str | None
+
+
 class NewsAgentState(TypedDict, total=False):
     scope: OemScope
     context: Literal["supplier", "global"]
+    # OEM and supplier details fetched from DB
+    oem_data: EntityData
+    supplier_data: EntityData | None
     # Pre-fetched data passed from outside (backward compat)
     news_data: dict[str, list[dict]]
     # Per-source raw fetch results (populated by parallel fetch nodes)
@@ -39,27 +58,71 @@ class NewsAgentState(TypedDict, total=False):
 
 
 # ---------------------------------------------------------------------------
-# Keyword helpers
+# Helper to extract EntityData from a DB model
 # ---------------------------------------------------------------------------
 
-def _newsapi_keywords(scope: OemScope | None) -> list[str]:
+def _entity_from_model(obj) -> EntityData:
+    """Build an EntityData dict from a SQLAlchemy OEM or Supplier model."""
+    return EntityData(
+        id=str(obj.id),
+        name=getattr(obj, "name", "") or "",
+        location=getattr(obj, "location", None),
+        city=getattr(obj, "city", None),
+        country=getattr(obj, "country", None),
+        countryCode=getattr(obj, "countryCode", None),
+        region=getattr(obj, "region", None),
+        commodities=getattr(obj, "commodities", None),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Parse commodities string into a list
+# ---------------------------------------------------------------------------
+
+def _parse_commodities(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    return [c.strip() for c in raw.replace(";", ",").split(",") if c.strip()]
+
+
+# ---------------------------------------------------------------------------
+# Keyword helpers — driven by oem_data and supplier_data, NOT scope
+# ---------------------------------------------------------------------------
+
+def _newsapi_keywords(
+    oem_data: EntityData | None, supplier_data: EntityData | None
+) -> list[str]:
     base = ["supply chain", "manufacturing", "logistics", "shipping"]
-    if scope:
-        # Supplier names — most targeted signal
-        for name in (scope.get("supplierNames") or [])[:3]:
-            base.append(name)
-        # Commodities traded by the suppliers
-        for commodity in (scope.get("commodities") or [])[:3]:
+    if oem_data:
+        oem_name = oem_data.get("name")
+        if oem_name:
+            base.append(oem_name)
+        for commodity in _parse_commodities(oem_data.get("commodities"))[:3]:
             base.append(f"{commodity} supply chain")
-        # Cities / countries where suppliers operate
-        for city in (scope.get("cities") or [])[:2]:
-            base.append(f"supply chain {city}")
-        for country in (scope.get("countries") or [])[:2]:
-            base.append(f"supply chain {country}")
+        oem_city = oem_data.get("city")
+        if oem_city:
+            base.append(f"supply chain {oem_city}")
+        oem_country = oem_data.get("countryCode") or oem_data.get("country")
+        if oem_country:
+            base.append(f"supply chain {oem_country}")
+    if supplier_data:
+        supplier_name = supplier_data.get("name")
+        if supplier_name:
+            base.append(supplier_name)
+        for commodity in _parse_commodities(supplier_data.get("commodities"))[:3]:
+            base.append(f"{commodity} supply chain")
+        sup_city = supplier_data.get("city")
+        if sup_city:
+            base.append(f"supply chain {sup_city}")
+        sup_country = supplier_data.get("countryCode") or supplier_data.get("country")
+        if sup_country:
+            base.append(f"supply chain {sup_country}")
     return base
 
 
-def _gdelt_keywords(scope: OemScope | None) -> list[str]:
+def _gdelt_keywords(
+    oem_data: EntityData | None, supplier_data: EntityData | None
+) -> list[str]:
     base = [
         "supply chain disruption",
         "trade sanctions",
@@ -67,14 +130,24 @@ def _gdelt_keywords(scope: OemScope | None) -> list[str]:
         "factory shutdown",
         "natural disaster manufacturing",
     ]
-    if scope:
-        # Supplier-specific geopolitical signals
-        for name in (scope.get("supplierNames") or [])[:2]:
-            base.append(f"{name} disruption")
-        for commodity in (scope.get("commodities") or [])[:2]:
+    if oem_data:
+        oem_name = oem_data.get("name")
+        if oem_name:
+            base.append(f"{oem_name} disruption")
+        for commodity in _parse_commodities(oem_data.get("commodities"))[:2]:
             base.append(f"{commodity} shortage")
-        for country in (scope.get("countries") or [])[:2]:
-            base.append(f"sanctions {country}")
+        oem_country = oem_data.get("countryCode") or oem_data.get("country")
+        if oem_country:
+            base.append(f"sanctions {oem_country}")
+    if supplier_data:
+        supplier_name = supplier_data.get("name")
+        if supplier_name:
+            base.append(f"{supplier_name} disruption")
+        for commodity in _parse_commodities(supplier_data.get("commodities"))[:2]:
+            base.append(f"{commodity} shortage")
+        sup_country = supplier_data.get("countryCode") or supplier_data.get("country")
+        if sup_country:
+            base.append(f"sanctions {sup_country}")
     return base
 
 
@@ -84,8 +157,9 @@ def _gdelt_keywords(scope: OemScope | None) -> list[str]:
 
 async def _fetch_newsapi_node(state: NewsAgentState) -> NewsAgentState:
     """Fetch articles from NewsAPI.org."""
-    scope = state.get("scope")
-    keywords = _newsapi_keywords(scope)
+    oem_data = state.get("oem_data")
+    supplier_data = state.get("supplier_data")
+    keywords = _newsapi_keywords(oem_data, supplier_data)
     try:
         source = NewsDataSource()
         await source.initialize({})
@@ -100,8 +174,9 @@ async def _fetch_newsapi_node(state: NewsAgentState) -> NewsAgentState:
 
 async def _fetch_gdelt_node(state: NewsAgentState) -> NewsAgentState:
     """Fetch geopolitical event articles from GDELT (no API key required)."""
-    scope = state.get("scope")
-    keywords = _gdelt_keywords(scope)
+    oem_data = state.get("oem_data")
+    supplier_data = state.get("supplier_data")
+    keywords = _gdelt_keywords(oem_data, supplier_data)
     try:
         source = GDELTDataSource()
         await source.initialize({})
@@ -120,7 +195,7 @@ async def _fetch_gdelt_node(state: NewsAgentState) -> NewsAgentState:
 
 def _merge_news_node(state: NewsAgentState) -> NewsAgentState:
     """
-    Combine articles from all 3 sources + any pre-fetched news_data.
+    Combine articles from all sources + any pre-fetched news_data.
     Deduplicates by normalised title to avoid redundant LLM tokens.
     """
     combined: list[dict] = []
@@ -158,7 +233,7 @@ def _merge_news_node(state: NewsAgentState) -> NewsAgentState:
 
 
 # ---------------------------------------------------------------------------
-# Existing nodes (unchanged logic)
+# Build news items node
 # ---------------------------------------------------------------------------
 
 def _build_news_items_node(state: NewsAgentState) -> NewsAgentState:
@@ -185,128 +260,181 @@ def _build_news_items_node(state: NewsAgentState) -> NewsAgentState:
     return {"news_items": normalized}
 
 
-_prompt_supplier: ChatPromptTemplate | None = None
-_prompt_global: ChatPromptTemplate | None = None
+# ---------------------------------------------------------------------------
+# Build OEM/supplier context string for LLM prompts
+# ---------------------------------------------------------------------------
+
+def _build_entity_context(
+    oem_data: EntityData | None, supplier_data: EntityData | None
+) -> str:
+    """Build a human-readable context block describing the OEM and supplier."""
+    parts: list[str] = []
+    if oem_data:
+        oem_name = oem_data.get("name") or "Unknown"
+        oem_loc_parts = [
+            p
+            for p in [
+                oem_data.get("city"),
+                oem_data.get("country"),
+                oem_data.get("region"),
+            ]
+            if p
+        ]
+        oem_loc = ", ".join(oem_loc_parts) if oem_loc_parts else "Unknown"
+        oem_commodities = oem_data.get("commodities") or "N/A"
+        parts.append(
+            f"OEM: {oem_name}\n"
+            f"  Location: {oem_loc}\n"
+            f"  Commodities: {oem_commodities}"
+        )
+    if supplier_data:
+        sup_name = supplier_data.get("name") or "Unknown"
+        sup_loc_parts = [
+            p
+            for p in [
+                supplier_data.get("city"),
+                supplier_data.get("country"),
+                supplier_data.get("region"),
+            ]
+            if p
+        ]
+        sup_loc = ", ".join(sup_loc_parts) if sup_loc_parts else "Unknown"
+        sup_commodities = supplier_data.get("commodities") or "N/A"
+        parts.append(
+            f"Supplier: {sup_name}\n"
+            f"  Location: {sup_loc}\n"
+            f"  Commodities: {sup_commodities}"
+        )
+    return "\n".join(parts) if parts else "No entity context available."
 
 
 def _get_llm():
     return get_chat_model()
 
 
-def _get_prompt(context: Literal["supplier", "global"]) -> ChatPromptTemplate:
-    global _prompt_supplier, _prompt_global
-
-    if context == "supplier":
-        if _prompt_supplier is None:
-            _prompt_supplier = ChatPromptTemplate.from_messages(
-                [
-                    (
-                        "system",
-                        (
-                            "You are a News Agent for a manufacturing supply "
-                            "chain. You receive news items about suppliers, "
-                            "OEMs, and regions. Extract structured supply "
-                            "chain risk signals using the following "
-                            "risk types: factory_shutdown, labor_strike, "
-                            "bankruptcy_risk, sanction_risk, "
-                            "port_congestion, natural_disaster, "
-                            "geopolitical_tension, regulatory_change, "
-                            "infrastructure_failure, commodity_shortage, "
-                            "cyber_incident.\n\n"
-                            "Return ONLY valid JSON."
-                        ),
-                    ),
-                    (
-                        "user",
-                        (
-                            "Analyze the following news items in the context "
-                            "of the OEM and suppliers.\n\n"
-                            "News JSON:\n{news_items_json}\n\n"
-                            "Return JSON of shape:\n"
-                            "{{\n"
-                            '  "risks": [\n'
-                            "    {{\n"
-                            '      "title": str,\n'
-                            '      "description": str,\n'
-                            '      "severity": "low" | "medium" | '
-                            '"high" | "critical",\n'
-                            '      "affectedRegion": str | null,\n'
-                            '      "affectedSupplier": str | null,\n'
-                            '      "estimatedImpact": str | null,\n'
-                            '      "estimatedCost": number | null,\n'
-                            '      "risk_type": str,\n'
-                            '      "source": str | null\n'
-                            "    }}\n"
-                            "  ],\n"
-                            '  "opportunities": [\n'
-                            "    {{\n"
-                            '      "title": str,\n'
-                            '      "description": str,\n'
-                            '      "type": "cost_saving" | '
-                            '"time_saving" | "quality_improvement" | '
-                            '"market_expansion" | '
-                            '"supplier_diversification",\n'
-                            '      "affectedRegion": str | null,\n'
-                            '      "potentialBenefit": str | null,\n'
-                            '      "estimatedValue": number | null\n'
-                            "    }}\n"
-                            "  ]\n"
-                            "}}\n"
-                            "If none, use empty arrays."
-                        ),
-                    ),
-                ]
-            )
-        return _prompt_supplier
-
-    if _prompt_global is None:
-        _prompt_global = ChatPromptTemplate.from_messages(
-            [
+def _build_supplier_prompt(
+    oem_data: EntityData | None, supplier_data: EntityData | None
+) -> ChatPromptTemplate:
+    entity_context = _build_entity_context(oem_data, supplier_data)
+    return ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
                 (
-                    "system",
-                    (
-                        "You are a global supply chain News Agent. You "
-                        "receive news about macro events (geopolitics, "
-                        "trade, climate, logistics). Extract only "
-                        "material global supply chain risks."
-                    ),
+                    "You are a News Agent for a manufacturing supply "
+                    "chain. You receive news items about suppliers, "
+                    "OEMs, and regions. Extract structured supply "
+                    "chain risk signals using the following "
+                    "risk types: factory_shutdown, labor_strike, "
+                    "bankruptcy_risk, sanction_risk, "
+                    "port_congestion, natural_disaster, "
+                    "geopolitical_tension, regulatory_change, "
+                    "infrastructure_failure, commodity_shortage, "
+                    "cyber_incident.\n\n"
+                    "Return ONLY valid JSON."
                 ),
+            ),
+            (
+                "user",
                 (
-                    "user",
-                    (
-                        "Analyze the following news items for global supply "
-                        "chain risk (not just a single OEM).\n\n"
-                        "News JSON:\n{news_items_json}\n\n"
-                        "Return JSON of shape:\n"
-                        "{{\n"
-                        '  "risks": [\n'
-                        "    {{\n"
-                        '      "title": str,\n'
-                        '      "description": str,\n'
-                        '      "severity": "low" | "medium" | '
-                        '"high" | "critical",\n'
-                        '      "affectedRegion": str | null,\n'
-                        '      "affectedSupplier": null,\n'
-                        '      "estimatedImpact": str | null,\n'
-                        '      "estimatedCost": number | null,\n'
-                        '      "risk_type": str,\n'
-                        '      "source": str | null\n'
-                        "    }}\n"
-                        "  ],\n"
-                        '  "opportunities": []\n'
-                        "}}\n"
-                        "If no material global risks, return "
-                        '{{"risks": [], "opportunities": []}}.'
-                    ),
+                    "Analyze the following news items in the context "
+                    "of this OEM and supplier.\n\n"
+                    f"=== Entity Context ===\n{entity_context}\n\n"
+                    "=== News Items ===\n{{news_items_json}}\n\n"
+                    "Return JSON of shape:\n"
+                    "{{\n"
+                    '  "risks": [\n'
+                    "    {{\n"
+                    '      "title": str,\n'
+                    '      "description": str,\n'
+                    '      "severity": "low" | "medium" | '
+                    '"high" | "critical",\n'
+                    '      "affectedRegion": str | null,\n'
+                    '      "affectedSupplier": str | null,\n'
+                    '      "estimatedImpact": str | null,\n'
+                    '      "estimatedCost": number | null,\n'
+                    '      "risk_type": str,\n'
+                    '      "source": str | null\n'
+                    "    }}\n"
+                    "  ],\n"
+                    '  "opportunities": [\n'
+                    "    {{\n"
+                    '      "title": str,\n'
+                    '      "description": str,\n'
+                    '      "type": "cost_saving" | '
+                    '"time_saving" | "quality_improvement" | '
+                    '"market_expansion" | '
+                    '"supplier_diversification",\n'
+                    '      "affectedRegion": str | null,\n'
+                    '      "potentialBenefit": str | null,\n'
+                    '      "estimatedValue": number | null\n'
+                    "    }}\n"
+                    "  ]\n"
+                    "}}\n"
+                    "If none, use empty arrays."
                 ),
-            ]
-        )
-    return _prompt_global
+            ),
+        ]
+    )
 
+
+def _build_global_prompt(
+    oem_data: EntityData | None, supplier_data: EntityData | None
+) -> ChatPromptTemplate:
+    entity_context = _build_entity_context(oem_data, supplier_data)
+    return ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                (
+                    "You are a global supply chain News Agent. You "
+                    "receive news about macro events (geopolitics, "
+                    "trade, climate, logistics). Extract only "
+                    "material global supply chain risks that could "
+                    "affect the given OEM and supplier."
+                ),
+            ),
+            (
+                "user",
+                (
+                    "Analyze the following news items for global supply "
+                    "chain risks relevant to this OEM and supplier.\n\n"
+                    f"=== Entity Context ===\n{entity_context}\n\n"
+                    "=== News Items ===\n{{news_items_json}}\n\n"
+                    "Return JSON of shape:\n"
+                    "{{\n"
+                    '  "risks": [\n'
+                    "    {{\n"
+                    '      "title": str,\n'
+                    '      "description": str,\n'
+                    '      "severity": "low" | "medium" | '
+                    '"high" | "critical",\n'
+                    '      "affectedRegion": str | null,\n'
+                    '      "affectedSupplier": null,\n'
+                    '      "estimatedImpact": str | null,\n'
+                    '      "estimatedCost": number | null,\n'
+                    '      "risk_type": str,\n'
+                    '      "source": str | null\n'
+                    "    }}\n"
+                    "  ],\n"
+                    '  "opportunities": []\n'
+                    "}}\n"
+                    "If no material global risks, return "
+                    '{{"risks": [], "opportunities": []}}.'
+                ),
+            ),
+        ]
+    )
+
+
+# ---------------------------------------------------------------------------
+# LLM risk extraction node
+# ---------------------------------------------------------------------------
 
 async def _news_risk_llm_node(state: NewsAgentState) -> NewsAgentState:
     """
     Convert NewsItem list into risks and opportunities using LangChain.
+    Builds prompts using oem_data and supplier_data from state.
     Returns empty lists when LLM is not configured.
     """
     items = state.get("news_items") or []
@@ -318,7 +446,14 @@ async def _news_risk_llm_node(state: NewsAgentState) -> NewsAgentState:
         return {"news_risks": [], "news_opportunities": []}
 
     context = state.get("context", "supplier") or "supplier"
-    prompt = _get_prompt(context)  # type: ignore[arg-type]
+    oem_data = state.get("oem_data")
+    supplier_data = state.get("supplier_data")
+
+    if context == "supplier":
+        prompt = _build_supplier_prompt(oem_data, supplier_data)
+    else:
+        prompt = _build_global_prompt(oem_data, supplier_data)
+
     chain = prompt | llm
 
     try:
@@ -400,8 +535,34 @@ NEWS_GRAPH = _builder.compile()
 
 
 # ---------------------------------------------------------------------------
-# Public entrypoint (signature unchanged — backward compatible)
+# Public entrypoint
 # ---------------------------------------------------------------------------
+
+def _resolve_entity_data(
+    scope: OemScope,
+) -> tuple[EntityData | None, EntityData | None]:
+    """Fetch OEM and supplier details from the DB using IDs in scope."""
+    db = SessionLocal()
+    try:
+        oem_data: EntityData | None = None
+        supplier_data: EntityData | None = None
+
+        oem_id_str = scope.get("oemId")
+        if oem_id_str:
+            oem = get_oem_by_id(db, UUID(oem_id_str))
+            if oem:
+                oem_data = _entity_from_model(oem)
+
+        supplier_id_str = scope.get("supplierId")
+        if supplier_id_str:
+            supplier = get_supplier_by_id(db, UUID(supplier_id_str))
+            if supplier:
+                supplier_data = _entity_from_model(supplier)
+
+        return oem_data, supplier_data
+    finally:
+        db.close()
+
 
 async def run_news_agent_graph(
     news_data: dict[str, list[dict]],
@@ -411,15 +572,20 @@ async def run_news_agent_graph(
     """
     Orchestrate the News Agent using LangGraph and LangChain.
 
-    Fetches from NewsAPI, GDELT, and Finlight in parallel, merges and
-    deduplicates the articles, then runs LLM risk/opportunity extraction.
-    `news_data` (pre-fetched externally) is merged in as well for backward
-    compatibility.
+    Fetches from NewsAPI and GDELT in parallel, merges and deduplicates the
+    articles, then runs LLM risk/opportunity extraction.
+
+    OEM and supplier details are fetched from the database using ``oemId``
+    and ``supplierId`` from the scope.
     """
+    oem_data, supplier_data = _resolve_entity_data(scope)
+
     initial_state: NewsAgentState = {
         "scope": scope,
         "news_data": news_data,
         "context": context,
+        "oem_data": oem_data,
+        "supplier_data": supplier_data,
     }
 
     final_state = await NEWS_GRAPH.ainvoke(initial_state)
