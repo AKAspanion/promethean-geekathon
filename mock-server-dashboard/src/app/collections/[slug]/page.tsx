@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState, useCallback } from "react";
+import { use, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { RecordTable } from "@/components/Records/RecordTable";
 import { RecordModal } from "@/components/Records/RecordModal";
@@ -32,6 +32,24 @@ export default function CollectionDetailPage({ params }: PageProps) {
     { q: appliedQuery || undefined }
   );
   const records = recordsData?.items ?? [];
+
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2000);
+  }, []);
+
+  const handleCopyUrl = useCallback(() => {
+    const base = process.env.NEXT_PUBLIC_MOCK_SERVER_URL ?? "http://localhost:4000";
+    const search = new URLSearchParams();
+    if (appliedQuery) search.set("q", appliedQuery);
+    const qs = search.toString();
+    const url = `${base}/mock/${resolvedSlug}${qs ? `?${qs}` : ""}`;
+    navigator.clipboard.writeText(url).then(() => showToast("URL copied!"));
+  }, [appliedQuery, resolvedSlug, showToast]);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<RecordItem | null>(null);
@@ -147,6 +165,18 @@ export default function CollectionDetailPage({ params }: PageProps) {
           >
             Search
           </button>
+          <button
+            type="button"
+            onClick={handleCopyUrl}
+            disabled={!appliedQuery}
+            title="Copy API URL"
+            className="rounded-lg border border-zinc-300 bg-zinc-50 p-2 text-zinc-700 hover:bg-zinc-100 disabled:opacity-30 disabled:cursor-not-allowed dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-600"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+          </button>
           {appliedQuery && (
             <button
               type="button"
@@ -197,6 +227,11 @@ export default function CollectionDetailPage({ params }: PageProps) {
           onSubmit={handleSubmit}
           isPending={createMutation.isPending || replaceMutation.isPending}
         />
+      )}
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-50 animate-fade-in rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white shadow-lg dark:bg-zinc-100 dark:text-zinc-900">
+          {toast}
+        </div>
       )}
     </main>
   );
