@@ -2,7 +2,7 @@
 
 POST /trend-insights/run
     Manually trigger the agent for a given OEM.
-    Accepts optional body: { oemName, excelPath, scope }
+    Accepts optional body: { oemName }
     Returns the generated TrendInsightResponse list.
 
 GET  /trend-insights
@@ -29,7 +29,10 @@ from app.schemas.trend_insight import (
     TrendInsightResponse,
     TrendInsightRunResponse,
 )
-from app.services.trend_orchestrator import run_trend_insights_cycle_async
+from app.services.trend_orchestrator import (
+    run_trend_insights_cycle_async,
+    run_trend_insights_for_supplier_async,
+)
 from app.services.llm_client import get_llm_client
 
 logger = logging.getLogger(__name__)
@@ -45,12 +48,10 @@ async def run_trend_insights(
     oem: Oem = Depends(get_current_oem),
     db: Session = Depends(get_db),
     oem_name: str | None = Body(None, embed=True),
-    excel_path: str | None = Body(None, embed=True),
 ):
     """Run the trend-insights agent for the authenticated OEM.
 
     - **oem_name**: Override OEM display name (default: OEM from JWT).
-    - **excel_path**: Override Excel path (default: data/mock_suppliers_demo.xlsx).
     """
     effective_oem_name = oem_name or oem.name
     client = get_llm_client()
@@ -59,7 +60,6 @@ async def run_trend_insights(
         saved = await run_trend_insights_cycle_async(
             db,
             oem_name=effective_oem_name,
-            excel_path=excel_path,
         )
     except Exception as exc:
         logger.exception("Trend insights run failed: %s", exc)
@@ -69,7 +69,37 @@ async def run_trend_insights(
         message="Trend insights generated successfully.",
         insights_generated=len(saved),
         oem_name=effective_oem_name,
-        excel_path=excel_path or "data/mock_suppliers_demo.xlsx",
+        llm_provider=client.provider,
+        insights=[_row_to_schema(r) for r in saved],
+    )
+
+
+@router.post("/run/supplier/{supplier_id}", response_model=TrendInsightRunResponse)
+async def run_trend_insights_for_supplier(
+    supplier_id: str,
+    oem: Oem = Depends(get_current_oem),
+    db: Session = Depends(get_db),
+):
+    """Run the trend-insights agent scoped to a single supplier row."""
+    client = get_llm_client()
+
+    try:
+        saved = await run_trend_insights_for_supplier_async(
+            db,
+            supplier_id=supplier_id,
+            oem_name=oem.name,
+        )
+    except Exception as exc:
+        logger.exception("Trend insights run failed for supplier %s: %s", supplier_id, exc)
+        raise HTTPException(status_code=500, detail=f"Agent run failed: {exc}")
+
+    if not saved:
+        raise HTTPException(status_code=404, detail="Supplier not found or no insights generated.")
+
+    return TrendInsightRunResponse(
+        message=f"Trend insights generated for supplier.",
+        insights_generated=len(saved),
+        oem_name=oem.name,
         llm_provider=client.provider,
         insights=[_row_to_schema(r) for r in saved],
     )
@@ -144,7 +174,6 @@ def _row_to_schema(row: TrendInsight) -> TrendInsightResponse:
         source_articles=row.source_articles or [],
         confidence=row.confidence,
         oem_name=row.oem_name,
-        excel_path=row.excel_path,
         llm_provider=row.llm_provider,
         createdAt=row.createdAt,
     )

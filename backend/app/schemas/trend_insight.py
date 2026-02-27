@@ -20,7 +20,6 @@ class TrendInsightResponse(BaseModel):
     source_articles: list[str] | None
     confidence: float | None
     oem_name: str | None
-    excel_path: str | None
     llm_provider: str | None
     createdAt: datetime
 
@@ -31,6 +30,5 @@ class TrendInsightRunResponse(BaseModel):
     message: str
     insights_generated: int
     oem_name: str
-    excel_path: str
     llm_provider: str
     insights: list[TrendInsightResponse]

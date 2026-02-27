@@ -3,6 +3,7 @@ from typing import Any
 
 from app.data.weather import WeatherDataSource
 from app.data.news import NewsDataSource
+from app.data.gdelt import GDELTDataSource
 from app.data.traffic import TrafficDataSource
 from app.data.market import MarketDataSource
 from app.data.shipping import ShippingRoutesDataSource
@@ -24,6 +25,9 @@ class DataSourceManager:
         news = NewsDataSource()
         await news.initialize({})
         self._sources[news.get_type()] = news
+        gdelt = GDELTDataSource()
+        await gdelt.initialize({})
+        self._sources[gdelt.get_type()] = gdelt
         traffic = TrafficDataSource()
         await traffic.initialize({})
         self._sources[traffic.get_type()] = traffic

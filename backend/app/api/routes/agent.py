@@ -11,6 +11,7 @@ from app.orchestration.agent_service import (
     get_latest_risk_score,
     trigger_manual_analysis_sync,
     trigger_manual_analysis_v2_sync,
+    trigger_news_analysis_sync,
     _ensure_agent_status,
 )
 
@@ -94,6 +95,29 @@ def trigger_analysis(
     oem_id = (body.oemId if body else None) or oem.id
     trigger_manual_analysis_sync(db, oem_id)
     return {"message": "Analysis triggered successfully", "oemId": str(oem_id)}
+
+
+@router.post("/trigger/news")
+def trigger_news_analysis(
+    body: TriggerBody | None = None,
+    oem: Oem = Depends(get_current_oem),
+    db: Session = Depends(get_db),
+):
+    """
+    Run only the News Agent for the current OEM.
+
+    Fetches supply-chain news from NewsAPI + GDELT, runs LLM risk extraction
+    for both supplier-scoped and global contexts, and persists the results.
+    Much faster than the full /agent/trigger pipeline (no weather or shipping).
+    """
+    oem_id = (body.oemId if body else None) or oem.id
+    result = trigger_news_analysis_sync(db, oem_id)
+    return {
+        "message": "News analysis completed successfully",
+        "oemId": str(oem_id),
+        "risksCreated": result["risksCreated"],
+        "opportunitiesCreated": result["opportunitiesCreated"],
+    }
 
 
 @router.post("/trigger/v2")

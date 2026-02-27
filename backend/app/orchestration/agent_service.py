@@ -1303,6 +1303,154 @@ def trigger_manual_analysis_v2_sync(db: Session, oem_id: UUID | None) -> None:
         _is_running = False
 
 
+def trigger_news_analysis_sync(db: Session, oem_id: UUID) -> dict:
+    """
+    Run only the News Agent for a given OEM and persist results.
+
+    Fetches from NewsAPI + GDELT (via the NEWS_GRAPH parallel fetch nodes),
+    runs LLM risk/opportunity extraction for both supplier and global context,
+    then saves the results to the DB.
+
+    Returns a dict with risksCreated and opportunitiesCreated counts.
+    """
+    oem = get_oem_by_id(db, oem_id)
+    if not oem:
+        logger.warning("trigger_news_analysis_sync: OEM %s not found", oem_id)
+        return {"risksCreated": 0, "opportunitiesCreated": 0}
+
+    # Build a best-effort scope — works even when no suppliers exist yet.
+    scope = get_oem_scope(db, oem_id)
+    if not scope:
+        # Fall back to a minimal scope using only the OEM's own data.
+        scope = OemScope(
+            oemId=str(oem_id),
+            oemName=oem.name,
+            supplierNames=[],
+            locations=[getattr(oem, "location", None) or ""],
+            cities=[getattr(oem, "city", None) or ""],
+            countries=[getattr(oem, "country", None) or ""],
+            regions=[getattr(oem, "region", None) or ""],
+            commodities=[],
+        )
+
+    today = date.today()
+    existing_count = (
+        db.query(WorkflowRun)
+        .filter(WorkflowRun.oemId == oem_id, WorkflowRun.runDate == today)
+        .count()
+    )
+    workflow_run = WorkflowRun(
+        oemId=oem_id,
+        supplierId=None,
+        runDate=today,
+        runIndex=existing_count + 1,
+    )
+    db.add(workflow_run)
+    db.commit()
+    db.refresh(workflow_run)
+
+    run = _create_agent_run_in_db(
+        db,
+        oem_id=oem_id,
+        workflow_run_id=workflow_run.id,
+        initial_task=f"News-only analysis for OEM: {oem.name}",
+        supplier_id=None,
+    )
+
+    risks_created = 0
+    opps_created = 0
+
+    async def _run():
+        nonlocal risks_created, opps_created
+
+        _update_status(
+            db,
+            AgentStatus.ANALYZING.value,
+            f"Fetching and analysing news for OEM: {oem.name}",
+            run.id,
+        )
+        await _broadcast_current_status(db, run.id)
+
+        # Run supplier-context and global-context passes in parallel.
+        # Each graph invocation fetches NewsAPI + GDELT internally, so both
+        # fetches and both LLM calls happen concurrently.
+        supplier_result, global_result = await asyncio.gather(
+            run_news_agent_graph({}, scope, context="supplier"),
+            run_news_agent_graph({}, scope, context="global"),
+        )
+
+        all_risks = (supplier_result.get("risks") or []) + (
+            global_result.get("risks") or []
+        )
+        all_opps = supplier_result.get("opportunities") or []
+
+        logger.info(
+            "trigger_news_analysis_sync: news agent produced risks=%d opps=%d for OEM %s",
+            len(all_risks),
+            len(all_opps),
+            oem.name,
+        )
+
+        _update_status(
+            db,
+            AgentStatus.PROCESSING.value,
+            f"Saving news risks for OEM: {oem.name}",
+            run.id,
+        )
+        await _broadcast_current_status(db, run.id)
+
+        for r in all_risks:
+            r["oemId"] = oem_id
+            create_risk_from_dict(
+                db, r, agent_status_id=run.id, workflow_run_id=workflow_run.id
+            )
+            risks_created += 1
+
+        for o in all_opps:
+            o["oemId"] = oem_id
+            create_opportunity_from_dict(
+                db, o, agent_status_id=run.id, workflow_run_id=workflow_run.id
+            )
+            opps_created += 1
+
+    try:
+        asyncio.run(_run())
+    except Exception as exc:
+        logger.exception("trigger_news_analysis_sync: error — %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        run.status = AgentStatus.ERROR.value
+        run.errorMessage = str(exc)
+        run.lastUpdated = datetime.utcnow()
+        db.commit()
+        return {"risksCreated": 0, "opportunitiesCreated": 0}
+
+    run.risksDetected = risks_created
+    run.opportunitiesIdentified = opps_created
+    run.lastProcessedData = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "oemsProcessed": [oem.name],
+        "workflowRunId": str(workflow_run.id),
+        "newsOnly": True,
+    }
+    db.commit()
+    _update_status(
+        db,
+        AgentStatus.COMPLETED.value,
+        "News analysis completed",
+        agent_status_id=run.id,
+    )
+    logger.info(
+        "trigger_news_analysis_sync: completed risks=%d opps=%d for OEM %s",
+        risks_created,
+        opps_created,
+        oem.name,
+    )
+    return {"risksCreated": risks_created, "opportunitiesCreated": opps_created}
+
+
 def run_scheduled_cycle(db: Session) -> None:
     """Scheduled agent cycle. Disabled; use POST /agent/trigger to run."""
     logger.info("run_scheduled_cycle: disabled; use POST /agent/trigger to run.")

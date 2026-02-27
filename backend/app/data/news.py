@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from app.data.base import BaseDataSource, DataSourceResult
 from app.services.external_api_cache import cached_get
@@ -35,37 +36,48 @@ class NewsDataSource(BaseDataSource):
         if self._api_key:
             try:
                 async with httpx.AsyncClient() as client:
-                    for keyword in keywords:
-                        r = await cached_get(
-                            client,
-                            f"{BASE_URL}/everything",
-                            params={
-                                "q": keyword,
-                                "apiKey": self._api_key,
-                                "sortBy": "publishedAt",
-                                "pageSize": 5,
-                            },
-                            timeout=10.0,
-                            service="news",
-                        )
-                        if r.status_code == 200:
-                            data = r.json()
-                            for article in data.get("articles") or []:
-                                results.append(
-                                    self._create_result(
-                                        {
-                                            "title": article.get("title"),
-                                            "description": article.get("description"),
-                                            "url": article.get("url"),
-                                            "source": (article.get("source") or {}).get(
-                                                "name"
-                                            ),
-                                            "publishedAt": article.get("publishedAt"),
-                                            "author": article.get("author"),
-                                            "content": article.get("content"),
-                                        }
-                                    )
+
+                    async def _fetch_keyword(keyword: str):
+                        try:
+                            r = await cached_get(
+                                client,
+                                f"{BASE_URL}/everything",
+                                params={
+                                    "q": keyword,
+                                    "apiKey": self._api_key,
+                                    "sortBy": "publishedAt",
+                                    "pageSize": 5,
+                                },
+                                timeout=10.0,
+                                service="news",
+                            )
+                            if r.status_code == 200:
+                                return r.json().get("articles") or []
+                        except Exception as exc:
+                            logger.warning("NewsAPI keyword %r error: %s", keyword, exc)
+                        return []
+
+                    # Fetch all keywords concurrently
+                    all_articles = await asyncio.gather(
+                        *[_fetch_keyword(kw) for kw in keywords]
+                    )
+                    for articles in all_articles:
+                        for article in articles:
+                            results.append(
+                                self._create_result(
+                                    {
+                                        "title": article.get("title"),
+                                        "description": article.get("description"),
+                                        "url": article.get("url"),
+                                        "source": (article.get("source") or {}).get(
+                                            "name"
+                                        ),
+                                        "publishedAt": article.get("publishedAt"),
+                                        "author": article.get("author"),
+                                        "content": article.get("content"),
+                                    }
                                 )
+                            )
             except Exception as e:
                 logger.exception("Error fetching news: %s", e)
         if not results:

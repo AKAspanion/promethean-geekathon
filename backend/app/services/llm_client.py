@@ -51,7 +51,6 @@ class TrendContext:
     """Aggregated context passed to the LLM for insight generation."""
 
     oem_name: str = ""
-    excel_path: str | None = None
     suppliers: list[dict] = field(default_factory=list)
     materials: list[dict] = field(default_factory=list)
     global_context: list[dict] = field(default_factory=list)

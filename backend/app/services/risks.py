@@ -13,6 +13,9 @@ def get_all(
     status: str | None = None,
     severity: str | None = None,
     oem_id: str | None = None,
+    source_type: str | None = None,
+    supplier_id: str | None = None,
+    affected_supplier: str | None = None,
 ) -> list[Risk]:
     q = (
         db.query(Risk)
@@ -25,6 +28,15 @@ def get_all(
         q = q.filter(Risk.severity == severity)
     if oem_id:
         q = q.filter(Risk.oemId == oem_id)
+    if source_type:
+        q = q.filter(Risk.sourceType == source_type)
+    if supplier_id:
+        try:
+            q = q.filter(Risk.supplierId == UUID(supplier_id))
+        except (ValueError, TypeError):
+            pass
+    if affected_supplier:
+        q = q.filter(Risk.affectedSupplier == affected_supplier)
     return q.all()
 
 

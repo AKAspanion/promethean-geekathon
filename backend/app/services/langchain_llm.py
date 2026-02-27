@@ -13,11 +13,24 @@ def get_chat_model() -> Any | None:
     """
     Return a LangChain chat model for agent graph prompts.
 
+    - llm_provider=openai and openai_api_key set → ChatOpenAI (supports custom
+      base_url for OpenAI-compatible proxies like sandlogic)
     - llm_provider=anthropic and anthropic_api_key set → ChatAnthropic
     - llm_provider=ollama or anthropic key missing → ChatOllama (local)
     - Otherwise None (callers use heuristic fallback).
     """
     provider = (settings.llm_provider or "anthropic").lower()
+
+    if provider == "openai" and settings.openai_api_key:
+        from langchain_openai import ChatOpenAI
+
+        return ChatOpenAI(
+            model=settings.openai_model or "gpt-4o-mini",
+            api_key=settings.openai_api_key,
+            base_url=settings.openai_base_url or None,
+            temperature=0.2,
+            max_tokens=1024,
+        )
 
     if provider == "ollama":
         from langchain_ollama import ChatOllama

@@ -14,5 +14,6 @@ langgraph
 langchain-core
 langchain-anthropic
 langchain-ollama>=0.2.0
+langchain-openai>=0.2.0
 openai>=1.0.0
 openpyxl>=3.1.0

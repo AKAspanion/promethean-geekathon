@@ -26,7 +26,6 @@ class Settings(BaseSettings):
     # Trend insights agent
     trend_agent_enabled: bool = False
     trend_agent_interval_minutes: int = 60
-    trend_agent_excel_path: str | None = None
 
     jwt_secret: str = "dev-secret-change-in-production"
     jwt_algorithm: str = "HS256"

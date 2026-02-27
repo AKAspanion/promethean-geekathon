@@ -3,11 +3,13 @@ import logging
 from typing import TypedDict, Literal
 
 from langchain_core.prompts import ChatPromptTemplate
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, END, START
 
 from app.services.agent_orchestrator import _extract_json
 from app.services.langchain_llm import get_chat_model
 from app.services.agent_types import OemScope
+from app.data.news import NewsDataSource
+from app.data.gdelt import GDELTDataSource
 
 logger = logging.getLogger(__name__)
 
@@ -25,16 +27,142 @@ class NewsItem(TypedDict):
 class NewsAgentState(TypedDict, total=False):
     scope: OemScope
     context: Literal["supplier", "global"]
+    # Pre-fetched data passed from outside (backward compat)
     news_data: dict[str, list[dict]]
+    # Per-source raw fetch results (populated by parallel fetch nodes)
+    newsapi_raw: list[dict]
+    gdelt_raw: list[dict]
+    # Merged + normalised
     news_items: list[NewsItem]
     news_risks: list[dict]
     news_opportunities: list[dict]
 
 
+# ---------------------------------------------------------------------------
+# Keyword helpers
+# ---------------------------------------------------------------------------
+
+def _newsapi_keywords(scope: OemScope | None) -> list[str]:
+    base = ["supply chain", "manufacturing", "logistics", "shipping"]
+    if scope:
+        # Supplier names — most targeted signal
+        for name in (scope.get("supplierNames") or [])[:3]:
+            base.append(name)
+        # Commodities traded by the suppliers
+        for commodity in (scope.get("commodities") or [])[:3]:
+            base.append(f"{commodity} supply chain")
+        # Cities / countries where suppliers operate
+        for city in (scope.get("cities") or [])[:2]:
+            base.append(f"supply chain {city}")
+        for country in (scope.get("countries") or [])[:2]:
+            base.append(f"supply chain {country}")
+    return base
+
+
+def _gdelt_keywords(scope: OemScope | None) -> list[str]:
+    base = [
+        "supply chain disruption",
+        "trade sanctions",
+        "port strike",
+        "factory shutdown",
+        "natural disaster manufacturing",
+    ]
+    if scope:
+        # Supplier-specific geopolitical signals
+        for name in (scope.get("supplierNames") or [])[:2]:
+            base.append(f"{name} disruption")
+        for commodity in (scope.get("commodities") or [])[:2]:
+            base.append(f"{commodity} shortage")
+        for country in (scope.get("countries") or [])[:2]:
+            base.append(f"sanctions {country}")
+    return base
+
+
+# ---------------------------------------------------------------------------
+# Parallel fetch nodes
+# ---------------------------------------------------------------------------
+
+async def _fetch_newsapi_node(state: NewsAgentState) -> NewsAgentState:
+    """Fetch articles from NewsAPI.org."""
+    scope = state.get("scope")
+    keywords = _newsapi_keywords(scope)
+    try:
+        source = NewsDataSource()
+        await source.initialize({})
+        results = await source.fetch_data({"keywords": keywords})
+        raw = [r.to_dict() for r in results]
+        logger.info("fetch_newsapi_node: fetched %d articles", len(raw))
+    except Exception as exc:
+        logger.exception("fetch_newsapi_node error: %s", exc)
+        raw = []
+    return {"newsapi_raw": raw}
+
+
+async def _fetch_gdelt_node(state: NewsAgentState) -> NewsAgentState:
+    """Fetch geopolitical event articles from GDELT (no API key required)."""
+    scope = state.get("scope")
+    keywords = _gdelt_keywords(scope)
+    try:
+        source = GDELTDataSource()
+        await source.initialize({})
+        results = await source.fetch_data({"keywords": keywords})
+        raw = [r.to_dict() for r in results]
+        logger.info("fetch_gdelt_node: fetched %d articles", len(raw))
+    except Exception as exc:
+        logger.exception("fetch_gdelt_node error: %s", exc)
+        raw = []
+    return {"gdelt_raw": raw}
+
+
+# ---------------------------------------------------------------------------
+# Merge node — fan-in after parallel fetches
+# ---------------------------------------------------------------------------
+
+def _merge_news_node(state: NewsAgentState) -> NewsAgentState:
+    """
+    Combine articles from all 3 sources + any pre-fetched news_data.
+    Deduplicates by normalised title to avoid redundant LLM tokens.
+    """
+    combined: list[dict] = []
+
+    # Include legacy pre-fetched data passed from outside the graph
+    external = state.get("news_data") or {}
+    for item in external.get("news") or []:
+        combined.append(item)
+
+    for item in state.get("newsapi_raw") or []:
+        combined.append(item)
+    for item in state.get("gdelt_raw") or []:
+        combined.append(item)
+
+    # Deduplicate by normalised title
+    seen_titles: set[str] = set()
+    unique: list[dict] = []
+    for item in combined:
+        data = item.get("data") if isinstance(item, dict) else item
+        if not isinstance(data, dict):
+            continue
+        title = (data.get("title") or "").strip().lower()
+        if not title or title in seen_titles:
+            continue
+        seen_titles.add(title)
+        unique.append(item)
+
+    logger.info(
+        "_merge_news_node: %d total → %d unique articles after dedup",
+        len(combined),
+        len(unique),
+    )
+    # Store as a news_data dict so _build_news_items_node can consume it normally
+    return {"news_data": {"news": unique}}
+
+
+# ---------------------------------------------------------------------------
+# Existing nodes (unchanged logic)
+# ---------------------------------------------------------------------------
+
 def _build_news_items_node(state: NewsAgentState) -> NewsAgentState:
-    """
-    Normalize raw news data into NewsItem structures.
-    """
+    """Normalize raw news data into NewsItem structures."""
     raw = state.get("news_data") or {}
     items = raw.get("news") or []
 
@@ -62,7 +190,6 @@ _prompt_global: ChatPromptTemplate | None = None
 
 
 def _get_llm():
-    """Return LangChain chat model (Anthropic or Ollama per settings)."""
     return get_chat_model()
 
 
@@ -180,7 +307,7 @@ def _get_prompt(context: Literal["supplier", "global"]) -> ChatPromptTemplate:
 async def _news_risk_llm_node(state: NewsAgentState) -> NewsAgentState:
     """
     Convert NewsItem list into risks and opportunities using LangChain.
-    Returns empty lists when Anthropic is not configured.
+    Returns empty lists when LLM is not configured.
     """
     items = state.get("news_items") or []
     if not items:
@@ -241,15 +368,40 @@ async def _news_risk_llm_node(state: NewsAgentState) -> NewsAgentState:
         return {"news_risks": [], "news_opportunities": []}
 
 
+# ---------------------------------------------------------------------------
+# Graph definition — parallel fetch → merge → build → LLM
+# ---------------------------------------------------------------------------
+
 _builder = StateGraph(NewsAgentState)
+
+# Parallel fetch nodes (fan-out from START)
+_builder.add_node("fetch_newsapi", _fetch_newsapi_node)
+_builder.add_node("fetch_gdelt", _fetch_gdelt_node)
+
+# Fan-in merge then existing pipeline
+_builder.add_node("merge_news", _merge_news_node)
 _builder.add_node("build_items", _build_news_items_node)
 _builder.add_node("news_risk_llm", _news_risk_llm_node)
-_builder.set_entry_point("build_items")
+
+# Fan-out: START → both fetch nodes in parallel
+_builder.add_edge(START, "fetch_newsapi")
+_builder.add_edge(START, "fetch_gdelt")
+
+# Fan-in: both fetch nodes → merge
+_builder.add_edge("fetch_newsapi", "merge_news")
+_builder.add_edge("fetch_gdelt", "merge_news")
+
+# Linear pipeline after merge
+_builder.add_edge("merge_news", "build_items")
 _builder.add_edge("build_items", "news_risk_llm")
 _builder.add_edge("news_risk_llm", END)
 
 NEWS_GRAPH = _builder.compile()
 
+
+# ---------------------------------------------------------------------------
+# Public entrypoint (signature unchanged — backward compatible)
+# ---------------------------------------------------------------------------
 
 async def run_news_agent_graph(
     news_data: dict[str, list[dict]],
@@ -258,6 +410,11 @@ async def run_news_agent_graph(
 ) -> dict[str, list[dict]]:
     """
     Orchestrate the News Agent using LangGraph and LangChain.
+
+    Fetches from NewsAPI, GDELT, and Finlight in parallel, merges and
+    deduplicates the articles, then runs LLM risk/opportunity extraction.
+    `news_data` (pre-fetched externally) is merged in as well for backward
+    compatibility.
     """
     initial_state: NewsAgentState = {
         "scope": scope,

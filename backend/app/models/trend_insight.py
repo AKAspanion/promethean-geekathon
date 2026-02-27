@@ -32,7 +32,6 @@ class TrendInsight(Base):
 
     # Run provenance
     oem_name = Column(String, nullable=True)
-    excel_path = Column(String, nullable=True)
     llm_provider = Column(String, nullable=True)
 
     createdAt = Column(

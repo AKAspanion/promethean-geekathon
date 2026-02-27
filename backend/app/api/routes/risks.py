@@ -21,10 +21,21 @@ def list_risks(
     status: str | None = Query(None),
     severity: str | None = Query(None),
     oemId: str | None = Query(None),
+    sourceType: str | None = Query(None),
+    supplierId: str | None = Query(None),
+    affectedSupplier: str | None = Query(None),
     db: Session = Depends(get_db),
     _: Oem = Depends(get_current_oem),
 ):
-    return get_all(db, status=status, severity=severity, oem_id=oemId)
+    return get_all(
+        db,
+        status=status,
+        severity=severity,
+        oem_id=oemId,
+        source_type=sourceType,
+        supplier_id=supplierId,
+        affected_supplier=affectedSupplier,
+    )
 
 
 @router.get("/{id}", response_model=RiskResponse)

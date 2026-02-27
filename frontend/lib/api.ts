@@ -66,6 +66,8 @@ export interface Risk {
   affectedSupplier?: string;
   estimatedImpact?: string;
   estimatedCost?: number;
+  supplierId?: string;
+  oemId?: string;
   mitigationPlans?: MitigationPlan[];
   createdAt: string;
   updatedAt: string;
@@ -173,10 +175,17 @@ export const agentApi = {
     api.get<AgentStatus>("/agent/status").then((res) => res.data),
   triggerAnalysis: () => api.post("/agent/trigger").then((res) => res.data),
   triggerAnalysisV2: () => api.post("/agent/trigger/v2").then((res) => res.data),
+  triggerNewsAnalysis: (oemId?: string) =>
+    api
+      .post<{ message: string; oemId: string; risksCreated: number; opportunitiesCreated: number }>(
+        "/agent/trigger/news",
+        oemId ? { oemId } : {}
+      )
+      .then((res) => res.data),
 };
 
 export const risksApi = {
-  getAll: (params?: { status?: string; severity?: string }) =>
+  getAll: (params?: { status?: string; severity?: string; sourceType?: string; supplierId?: string }) =>
     api.get<Risk[]>("/risks", { params }).then((res) => res.data),
   getById: (id: string) =>
     api.get<Risk>(`/risks/${id}`).then((res) => res.data),
@@ -254,6 +263,41 @@ export interface SupplierUpdatePayload {
   region?: string;
   commodities?: string;
 }
+
+export interface TrendInsightItem {
+  id: string;
+  scope: string;
+  entity_name: string | null;
+  risk_opportunity: string;
+  title: string;
+  description: string | null;
+  predicted_impact: string | null;
+  time_horizon: string | null;
+  severity: string | null;
+  recommended_actions: string[];
+  source_articles: string[];
+  confidence: number | null;
+  oem_name: string | null;
+  llm_provider: string | null;
+  createdAt: string;
+}
+
+export interface TrendInsightRunResult {
+  message: string;
+  insights_generated: number;
+  oem_name: string;
+  llm_provider: string;
+  insights: TrendInsightItem[];
+}
+
+export const trendInsightsApi = {
+  runForSupplier: (supplierId: string) =>
+    api
+      .post<TrendInsightRunResult>(`/trend-insights/run/supplier/${supplierId}`)
+      .then((res) => res.data),
+  getAll: (params?: { scope?: string; entity_name?: string; severity?: string; limit?: number }) =>
+    api.get<TrendInsightItem[]>("/trend-insights", { params }).then((res) => res.data),
+};
 
 export const suppliersApi = {
   uploadCsv: (file: File) => {
