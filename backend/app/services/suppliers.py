@@ -118,6 +118,10 @@ def get_all(db: Session, oem_id: UUID) -> list[Supplier]:
     )
 
 
+def get_by_id(db: Session, supplier_id: UUID) -> Supplier | None:
+    return db.query(Supplier).filter(Supplier.id == supplier_id).first()
+
+
 def get_one(db: Session, id: UUID, oem_id: UUID) -> Supplier | None:
     return (
         db.query(Supplier).filter(Supplier.id == id, Supplier.oemId == oem_id).first()

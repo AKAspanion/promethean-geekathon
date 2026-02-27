@@ -16,6 +16,7 @@ from app.models.supplier_risk_analysis import SupplierRiskAnalysis
 from app.services.oems import get_oem_by_id, get_all_oems
 from app.services.suppliers import (
     get_all as get_suppliers,
+    get_by_id as get_supplier_by_id,
     get_risks_by_supplier,
     get_swarm_summaries_by_supplier,
 )
@@ -1303,13 +1304,17 @@ def trigger_manual_analysis_v2_sync(db: Session, oem_id: UUID | None) -> None:
         _is_running = False
 
 
-def trigger_news_analysis_sync(db: Session, oem_id: UUID) -> dict:
+def trigger_news_analysis_sync(
+    db: Session, oem_id: UUID, supplier_id: UUID | None = None
+) -> dict:
     """
     Run only the News Agent for a given OEM and persist results.
 
     Fetches from NewsAPI + GDELT (via the NEWS_GRAPH parallel fetch nodes),
     runs LLM risk/opportunity extraction for both supplier and global context,
     then saves the results to the DB.
+
+    If supplier_id is provided, the scope is narrowed to that single supplier.
 
     Returns a dict with risksCreated and opportunitiesCreated counts.
     """
@@ -1318,20 +1323,30 @@ def trigger_news_analysis_sync(db: Session, oem_id: UUID) -> dict:
         logger.warning("trigger_news_analysis_sync: OEM %s not found", oem_id)
         return {"risksCreated": 0, "opportunitiesCreated": 0}
 
-    # Build a best-effort scope — works even when no suppliers exist yet.
-    scope = get_oem_scope(db, oem_id)
-    if not scope:
-        # Fall back to a minimal scope using only the OEM's own data.
-        scope = OemScope(
-            oemId=str(oem_id),
-            oemName=oem.name,
-            supplierNames=[],
-            locations=[getattr(oem, "location", None) or ""],
-            cities=[getattr(oem, "city", None) or ""],
-            countries=[getattr(oem, "country", None) or ""],
-            regions=[getattr(oem, "region", None) or ""],
-            commodities=[],
-        )
+    # When a specific supplier is requested, build a supplier-scoped scope.
+    if supplier_id:
+        supplier = get_supplier_by_id(db, supplier_id)
+        if not supplier:
+            logger.warning(
+                "trigger_news_analysis_sync: Supplier %s not found", supplier_id
+            )
+            return {"risksCreated": 0, "opportunitiesCreated": 0}
+        scope = get_oem_supplier_scope(db, oem_id, supplier)
+    else:
+        # Build a best-effort scope — works even when no suppliers exist yet.
+        scope = get_oem_scope(db, oem_id)
+        if not scope:
+            # Fall back to a minimal scope using only the OEM's own data.
+            scope = OemScope(
+                oemId=str(oem_id),
+                oemName=oem.name,
+                supplierNames=[],
+                locations=[getattr(oem, "location", None) or ""],
+                cities=[getattr(oem, "city", None) or ""],
+                countries=[getattr(oem, "country", None) or ""],
+                regions=[getattr(oem, "region", None) or ""],
+                commodities=[],
+            )
 
     today = date.today()
     existing_count = (
@@ -1341,7 +1356,7 @@ def trigger_news_analysis_sync(db: Session, oem_id: UUID) -> dict:
     )
     workflow_run = WorkflowRun(
         oemId=oem_id,
-        supplierId=None,
+        supplierId=supplier_id,
         runDate=today,
         runIndex=existing_count + 1,
     )
@@ -1354,7 +1369,7 @@ def trigger_news_analysis_sync(db: Session, oem_id: UUID) -> dict:
         oem_id=oem_id,
         workflow_run_id=workflow_run.id,
         initial_task=f"News-only analysis for OEM: {oem.name}",
-        supplier_id=None,
+        supplier_id=supplier_id,
     )
 
     risks_created = 0

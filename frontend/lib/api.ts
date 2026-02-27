@@ -175,11 +175,11 @@ export const agentApi = {
     api.get<AgentStatus>("/agent/status").then((res) => res.data),
   triggerAnalysis: () => api.post("/agent/trigger").then((res) => res.data),
   triggerAnalysisV2: () => api.post("/agent/trigger/v2").then((res) => res.data),
-  triggerNewsAnalysis: (oemId?: string) =>
+  triggerNewsAnalysis: (oemId?: string, supplierId?: string) =>
     api
       .post<{ message: string; oemId: string; risksCreated: number; opportunitiesCreated: number }>(
         "/agent/trigger/news",
-        oemId ? { oemId } : {}
+        { ...(oemId ? { oemId } : {}), ...(supplierId ? { supplierId } : {}) }
       )
       .then((res) => res.data),
 };

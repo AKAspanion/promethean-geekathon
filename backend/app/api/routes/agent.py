@@ -20,6 +20,7 @@ router = APIRouter(prefix="/agent", tags=["agent"])
 
 class TriggerBody(BaseModel):
     oemId: UUID | None = None
+    supplierId: UUID | None = None
 
 
 @router.get("/status")
@@ -111,7 +112,8 @@ def trigger_news_analysis(
     Much faster than the full /agent/trigger pipeline (no weather or shipping).
     """
     oem_id = (body.oemId if body else None) or oem.id
-    result = trigger_news_analysis_sync(db, oem_id)
+    supplier_id = body.supplierId if body else None
+    result = trigger_news_analysis_sync(db, oem_id, supplier_id=supplier_id)
     return {
         "message": "News analysis completed successfully",
         "oemId": str(oem_id),

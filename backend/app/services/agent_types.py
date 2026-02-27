@@ -13,5 +13,5 @@ class OemScope(TypedDict):
     regions: list[str]
     commodities: list[str]
     # When workflow runs per OEM-supplier pair, these identify the supplier.
-    supplierId: NotRequired[str]
-    supplierName: NotRequired[str]
+    supplierId: str
+    supplierName: str
