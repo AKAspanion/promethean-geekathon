@@ -1,6 +1,5 @@
 import "dotenv/config";
 import express from "express";
-import cors from "cors";
 import { getPrisma } from "./db/prisma";
 import { notFoundHandler, globalErrorHandler } from "./middleware/errorHandler";
 import collectionsRouter from "./routes/collections";
@@ -16,7 +15,6 @@ async function main(): Promise<void> {
   const app = express();
   (app.locals as AppLocals).prisma = prisma;
 
-  app.use(cors());
   app.use(express.json({ limit: "1mb" }));
 
   app.get("/health", async (_req, res) => {
