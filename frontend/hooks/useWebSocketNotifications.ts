@@ -15,7 +15,18 @@ type SuppliersSnapshotMessage = {
   suppliers: Supplier[];
 };
 
-type NotificationMessage = AgentStatusMessage | SuppliersSnapshotMessage;
+type NewsAgentProgressMessage = {
+  type: 'news_agent_progress';
+  step: string;
+  message: string;
+  context?: string;
+  details?: Record<string, unknown>;
+};
+
+type NotificationMessage =
+  | AgentStatusMessage
+  | SuppliersSnapshotMessage
+  | NewsAgentProgressMessage;
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -61,6 +72,40 @@ export function useWebSocketNotifications() {
           queryClient.setQueryData<Supplier[] | undefined>(
             ['suppliers'],
             data.suppliers,
+          );
+        }
+
+        if (data.type === 'news_agent_progress') {
+          console.log('[WS] news_agent_progress', {
+            step: data.step,
+            message: data.message,
+            context: data.context,
+            details: data.details,
+          });
+          // Merge into agent-status so AgentStatus component shows progress
+          queryClient.setQueryData<AgentStatus | undefined>(
+            ['agent-status'],
+            (prev) => {
+              if (!prev) return prev;
+              const isCompleted = data.step === 'completed';
+              return {
+                ...prev,
+                status: isCompleted ? 'completed' : 'analyzing',
+                currentTask: `[News] ${data.message}`,
+                lastUpdated: new Date().toISOString(),
+                // Update counters when the news agent completes
+                ...(isCompleted && data.details
+                  ? {
+                      risksDetected:
+                        prev.risksDetected +
+                        ((data.details.risks as number) || 0),
+                      opportunitiesIdentified:
+                        prev.opportunitiesIdentified +
+                        ((data.details.opportunities as number) || 0),
+                    }
+                  : {}),
+              };
+            },
           );
         }
       } catch {

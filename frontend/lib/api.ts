@@ -37,7 +37,7 @@ api.interceptors.response.use(
 // Types
 export interface AgentStatus {
   id: string;
-  status: "idle" | "monitoring" | "analyzing" | "processing" | "error";
+  status: "idle" | "monitoring" | "analyzing" | "processing" | "completed" | "error";
   currentTask?: string;
   lastProcessedData?: Record<string, unknown>;
   lastDataSource?: string;
@@ -45,6 +45,7 @@ export interface AgentStatus {
   risksDetected: number;
   opportunitiesIdentified: number;
   plansGenerated: number;
+  riskScore?: number | null;
   lastUpdated: string;
   createdAt: string;
 }
