@@ -93,7 +93,7 @@ function FactorCard({ factor }: { factor: RiskFactor }) {
         onClick={() => setOpen((o) => !o)}
       >
         <span
-          className={`h-2 w-2 shrink-0 rounded-full ${levelDot[factor.level] ?? "bg-gray-400"}`}
+          className={`h-2 w-2 shrink-0 rounded-full ${levelDot[factor.level] ?? "bg-gray-400 dark:bg-gray-500"}`}
         />
         <span className="flex-1 text-[12px] font-semibold text-dark-gray dark:text-gray-100 capitalize">
           {label}
@@ -396,7 +396,7 @@ export function ShipmentTimeline({ days }: ShipmentTimelineProps) {
             <div
               key={d.day_number}
               onClick={() => setSelectedDay(d)}
-              className={`flex flex-col gap-2 rounded-xl border p-3 cursor-pointer transition-all duration-150 hover:shadow-md hover:scale-[1.02] active:scale-[0.99] ${colors.border} ${colors.bg} dark:border-gray-600 dark:bg-gray-800/60`}
+              className={`flex flex-col gap-2 rounded-xl border p-3 cursor-pointer transition-all duration-150 hover:shadow-md hover:scale-[1.02] active:scale-[0.99] ${colors.border} ${colors.bg}`}
             >
               {/* Top row: day number + origin/dest badges + weather icon */}
               <div className="flex items-center justify-between gap-1">

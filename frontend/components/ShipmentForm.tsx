@@ -29,7 +29,7 @@ export function ShipmentForm({ onSubmit, loading, error }: ShipmentFormProps) {
       <button
         type="submit"
         disabled={loading}
-        className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary-dark px-5 py-3 text-[16px] font-semibold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+        className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary-dark px-5 py-3 text-[16px] font-semibold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-primary-light dark:text-gray-900 dark:hover:opacity-90"
       >
         {loading ? (
           <>
