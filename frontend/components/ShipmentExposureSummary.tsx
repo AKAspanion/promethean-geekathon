@@ -501,10 +501,17 @@ function RawJsonPanel({ data }: { data: WeatherGraphResponse }) {
 
   return (
     <div className="rounded-2xl border border-light-gray dark:border-gray-600 bg-white dark:bg-gray-800 shadow-sm overflow-hidden">
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center justify-between gap-3 px-5 py-4 text-left"
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setOpen((o) => !o);
+          }
+        }}
+        className="w-full flex items-center justify-between gap-3 px-5 py-4 text-left cursor-pointer"
       >
         <div>
           <div className="text-[14px] font-semibold text-dark-gray dark:text-gray-200">
@@ -517,14 +524,17 @@ function RawJsonPanel({ data }: { data: WeatherGraphResponse }) {
         <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); copyJson(); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              copyJson();
+            }}
             className="rounded-lg border border-primary-light/40 dark:border-primary-light/30 bg-white dark:bg-gray-700 px-3 py-1.5 text-[12px] font-medium text-primary-dark dark:text-primary-light transition hover:bg-sky-blue/10 dark:hover:bg-gray-600"
           >
             {copied ? "✓ Copied" : "Copy JSON"}
           </button>
           <span className="text-[18px] text-medium-gray dark:text-gray-400">{open ? "−" : "+"}</span>
         </div>
-      </button>
+      </div>
       {open && (
         <div className="border-t border-light-gray dark:border-gray-700 px-5 pb-5 pt-4">
           <pre className="max-h-96 overflow-auto rounded-xl border border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-900 p-4 text-[11px] leading-relaxed text-dark-gray dark:text-gray-300">
