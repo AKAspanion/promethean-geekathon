@@ -505,12 +505,18 @@ export const suppliersApi = {
 };
 
 // Shipping Risk Intelligence
+export interface RiskDimension {
+  score: number;
+  label: string;
+  reason?: string;
+}
+
 export interface ShippingRiskResult {
   shipping_risk_score: number;
   risk_level: string;
-  delay_risk?: { score: number; label: string } | null;
-  stagnation_risk?: { score: number; label: string } | null;
-  velocity_risk?: { score: number; label: string } | null;
+  delay_risk?: RiskDimension | null;
+  stagnation_risk?: RiskDimension | null;
+  velocity_risk?: RiskDimension | null;
   risk_factors: string[];
   recommended_actions: string[];
   shipment_metadata?: Record<string, unknown> | null;

@@ -159,7 +159,7 @@ def analyze_shipments_for_supplier(
     print(f"\n[ShipmentAgent] Calling LLM — model={settings.openai_model}")
 
     response = client.chat.completions.create(
-        model=settings.openai_model or "gpt-4o",
+        model= "gpt-4o",
         response_format={"type": "json_object"},
         messages=messages,
     )
@@ -175,7 +175,7 @@ def analyze_shipments_for_supplier(
         data = dict(SHIPMENT_FALLBACK_RESULT)
         data["risk_factors"] = ["Model returned non-JSON response"]
         data["recommended_actions"] = [llm_content]
-        data["shipment_metadata"] = {"context": context}
+        data["shipment_metadata"] = {"context": narrative}
 
     data.setdefault(
         "shipment_metadata",
