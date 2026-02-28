@@ -63,10 +63,20 @@ export function SuppliersList() {
 
       <div className="space-y-4">
         {suppliers.map((supplier) => {
-          const riskSummary = supplier.riskSummary;
+          const swarm = supplier.swarm;
           const riskLevel = supplier.latestRiskLevel ?? "LOW";
           const riskColor = riskLevelColors[riskLevel] ?? riskLevelColors.LOW;
           const hasScore = supplier.latestRiskScore != null;
+
+          // Derive risk count from swarm agents (latest run only)
+          const swarmRiskCount = swarm
+            ? swarm.agents.reduce(
+                (sum, agent) =>
+                  sum + ((agent.metadata as Record<string, unknown>)?.riskCount as number ?? 0),
+                0
+              )
+            : 0;
+          const swarmTopDriver = swarm?.topDrivers?.find((d) => d.trim()) ?? null;
 
           return (
             <Link
@@ -106,21 +116,20 @@ export function SuppliersList() {
                       <CircularScore score={supplier.latestRiskScore!} size="sm" />
                     </div>
                   )}
-                  {riskSummary && riskSummary.count > 0 && (
+                  {swarmRiskCount > 0 && (
                     <div className="text-xs text-medium-gray dark:text-gray-400 text-right">
-                      <div>{riskSummary.count} risks detected</div>
-                      {riskSummary.latest && (
+                      <div>{swarmRiskCount} risks detected</div>
+                      {swarmTopDriver && (
                         <div className="truncate max-w-50">
-                          Latest:{" "}
+                          Top driver:{" "}
                           <span className="font-medium">
-                            {riskSummary.latest.severity.toUpperCase()}
-                          </span>{" "}
-                          - {riskSummary.latest.title}
+                            {swarmTopDriver}
+                          </span>
                         </div>
                       )}
                     </div>
                   )}
-                  {!hasScore && (!riskSummary || riskSummary.count === 0) && (
+                  {!hasScore && swarmRiskCount === 0 && (
                     <span className="text-xs text-medium-gray dark:text-gray-400">
                       No analysis yet
                     </span>

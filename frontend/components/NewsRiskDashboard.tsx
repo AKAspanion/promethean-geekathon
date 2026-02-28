@@ -708,17 +708,40 @@ export function NewsRiskDashboard() {
           : "CRITICAL"
     : null;
 
-  const oemLevelColors: Record<string, { bg: string; text: string; border: string; bar: string }> = {
-    LOW: { bg: "bg-green-100 dark:bg-green-900/30", text: "text-green-800 dark:text-green-400", border: "border-green-200 dark:border-green-800", bar: "bg-green-500" },
-    MEDIUM: { bg: "bg-yellow-100 dark:bg-yellow-900/30", text: "text-yellow-800 dark:text-yellow-400", border: "border-yellow-200 dark:border-yellow-800", bar: "bg-yellow-500" },
-    HIGH: { bg: "bg-orange-100 dark:bg-orange-900/30", text: "text-orange-800 dark:text-orange-400", border: "border-orange-200 dark:border-orange-800", bar: "bg-orange-500" },
-    CRITICAL: { bg: "bg-red-100 dark:bg-red-900/30", text: "text-red-800 dark:text-red-400", border: "border-red-200 dark:border-red-800", bar: "bg-red-500" },
+  const oemLevelColors: Record<
+    string,
+    { bg: string; text: string; border: string; bar: string }
+  > = {
+    LOW: {
+      bg: "bg-green-100 dark:bg-green-900/30",
+      text: "text-green-800 dark:text-green-400",
+      border: "border-green-200 dark:border-green-800",
+      bar: "bg-green-500",
+    },
+    MEDIUM: {
+      bg: "bg-yellow-100 dark:bg-yellow-900/30",
+      text: "text-yellow-800 dark:text-yellow-400",
+      border: "border-yellow-200 dark:border-yellow-800",
+      bar: "bg-yellow-500",
+    },
+    HIGH: {
+      bg: "bg-orange-100 dark:bg-orange-900/30",
+      text: "text-orange-800 dark:text-orange-400",
+      border: "border-orange-200 dark:border-orange-800",
+      bar: "bg-orange-500",
+    },
+    CRITICAL: {
+      bg: "bg-red-100 dark:bg-red-900/30",
+      text: "text-red-800 dark:text-red-400",
+      border: "border-red-200 dark:border-red-800",
+      bar: "bg-red-500",
+    },
   };
 
   return (
-    <div className="mx-auto flex flex-col gap-6">
+    <div className="mx-auto flex flex-col gap-6 mt-6">
       {/* ── OEM Risk Summary Banner ──────────────────────────────────────── */}
-      {oemScore && oemRiskLevel && (
+      {/* {oemScore && oemRiskLevel && (
         <section className="rounded-2xl border border-light-gray dark:border-gray-600 bg-white dark:bg-gray-800 p-5 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
@@ -773,446 +796,448 @@ export function NewsRiskDashboard() {
             </p>
           )}
         </section>
-      )}
+      )} */}
 
-    <main className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(260px,320px)_1fr]">
-      {/* ── Left: Supplier list ──────────────────────────────────────────── */}
-      <section className="rounded-2xl border border-light-gray dark:border-gray-600 bg-white dark:bg-gray-800 p-4 shadow-sm">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="heading-3 text-dark-gray dark:text-gray-200 uppercase tracking-wider">
-            Suppliers
-          </h2>
-          <span className="rounded-full border border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-700/50 px-2 py-0.5 text-xs text-medium-gray dark:text-gray-400">
-            News filter
-          </span>
-        </div>
-
-        <div className="max-h-[calc(100vh-220px)] overflow-y-auto pr-1 space-y-1.5">
-          {/* All suppliers option */}
-          <button
-            type="button"
-            onClick={() => setSelectedSupplierId(null)}
-            className={`w-full text-left rounded-xl border px-3 py-2.5 transition hover:border-primary-light/50 hover:bg-sky-blue/20 dark:hover:bg-gray-700/50 ${
-              selectedSupplierId === null
-                ? "border-primary-dark bg-sky-blue/30 dark:bg-gray-700"
-                : "border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-800"
-            }`}
-          >
-            <span className="text-[13px] font-semibold text-dark-gray dark:text-gray-200">
-              All Suppliers
+      <main className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(260px,320px)_1fr]">
+        {/* ── Left: Supplier list ──────────────────────────────────────────── */}
+        <section className="rounded-2xl border border-light-gray dark:border-gray-600 bg-white dark:bg-gray-800 p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="heading-3 text-dark-gray dark:text-gray-200 uppercase tracking-wider">
+              Suppliers
+            </h2>
+            <span className="rounded-full border border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-700/50 px-2 py-0.5 text-xs text-medium-gray dark:text-gray-400">
+              News filter
             </span>
-            <p className="text-[11px] text-medium-gray dark:text-gray-400">
-              Global + supplier risks
-            </p>
-          </button>
-
-          {loadingSuppliers ? (
-            <div className="space-y-2 pt-2">
-              {[1, 2, 3].map((i) => (
-                <div
-                  key={i}
-                  className="animate-pulse rounded-xl border border-light-gray dark:border-gray-700 p-3"
-                >
-                  <div className="h-3 w-2/3 rounded bg-light-gray dark:bg-gray-700 mb-1.5" />
-                  <div className="h-2.5 w-1/2 rounded bg-light-gray dark:bg-gray-700" />
-                </div>
-              ))}
-            </div>
-          ) : suppliers.length === 0 ? (
-            <p className="pt-2 text-[12px] text-medium-gray dark:text-gray-400">
-              No suppliers found.
-            </p>
-          ) : (
-            suppliers.map((s) => {
-              const level = (s.latestRiskLevel ?? "").toLowerCase();
-              const levelDot =
-                level === "critical"
-                  ? "bg-red-500"
-                  : level === "high"
-                    ? "bg-orange-500"
-                    : level === "medium"
-                      ? "bg-yellow-500"
-                      : level === "low"
-                        ? "bg-green-500"
-                        : "bg-gray-400";
-
-              return (
-                <button
-                  key={s.id}
-                  type="button"
-                  onClick={() => setSelectedSupplierId(s.id)}
-                  className={`w-full text-left rounded-xl border p-3 transition hover:border-primary-light/50 hover:bg-sky-blue/20 dark:hover:bg-gray-700/50 ${
-                    selectedSupplierId === s.id
-                      ? "border-primary-dark bg-sky-blue/30 dark:bg-gray-700"
-                      : "border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-800"
-                  }`}
-                >
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <span
-                      className={`h-2 w-2 shrink-0 rounded-full ${levelDot}`}
-                    />
-                    <span className="text-[13px] font-medium text-dark-gray dark:text-gray-200 truncate">
-                      {s.name}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-medium-gray dark:text-gray-400 pl-4">
-                    {s.city && <span>{s.city}</span>}
-                    {s.country && <span>{s.country}</span>}
-                    {s.commodities && (
-                      <span
-                        className="truncate max-w-[120px]"
-                        title={s.commodities}
-                      >
-                        {s.commodities.split(",")[0].trim()}
-                      </span>
-                    )}
-                  </div>
-                </button>
-              );
-            })
-          )}
-        </div>
-      </section>
-
-      {/* ── Right: tabbed feed ───────────────────────────────────────────── */}
-      <section className="flex flex-col gap-4 min-w-0">
-        {/* ── Tab header ─────────────────────────────────────────────────── */}
-        <div className="rounded-2xl border border-light-gray dark:border-gray-600 bg-white dark:bg-gray-800 px-5 py-4 shadow-sm">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            {/* Title */}
-            <div className="min-w-0">
-              <h2 className="heading-3 text-dark-gray dark:text-gray-200 uppercase tracking-wider truncate">
-                {selectedSupplier ? selectedSupplier.name : "All Suppliers"}
-              </h2>
-              <p className="text-[12px] text-medium-gray dark:text-gray-400 mt-0.5">
-                {selectedSupplier
-                  ? `Analysis for ${selectedSupplier.name}`
-                  : "All news-sourced supply chain risks"}
-              </p>
-            </div>
-
-            {/* Tab switcher */}
-            <div className="flex shrink-0 rounded-lg border border-light-gray dark:border-gray-600 overflow-hidden text-[12px] font-medium self-start">
-              <button
-                type="button"
-                onClick={() => setActiveTab("news")}
-                className={`px-4 py-2 transition ${
-                  activeTab === "news"
-                    ? "bg-primary-dark text-white dark:bg-primary-light dark:text-gray-900"
-                    : "bg-white dark:bg-gray-800 text-dark-gray dark:text-gray-200 hover:bg-off-white dark:hover:bg-gray-700"
-                }`}
-              >
-                📰 News Risks
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab("trends")}
-                className={`px-4 py-2 border-l border-light-gray dark:border-gray-600 transition ${
-                  activeTab === "trends"
-                    ? "bg-primary-dark text-white dark:bg-primary-light dark:text-gray-900"
-                    : "bg-white dark:bg-gray-800 text-dark-gray dark:text-gray-200 hover:bg-off-white dark:hover:bg-gray-700"
-                }`}
-              >
-                ✦ Trend Insights
-              </button>
-            </div>
           </div>
 
-          {/* Tab-specific toolbar */}
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            {activeTab === "news" && (
-              <>
-                {!loadingRisks && risks.length > 0 && (
-                  <SeveritySummary risks={risks} />
-                )}
-                <div className="ml-auto flex gap-2">
-                  <button
-                    type="button"
-                    onClick={handleRunAnalysis}
-                    disabled={isAnalyzing}
-                    className="rounded-lg border border-primary-dark bg-primary-dark px-3 py-1.5 text-[12px] font-medium text-white transition hover:opacity-90 disabled:opacity-60 dark:bg-primary-light dark:border-primary-light dark:text-gray-900"
+          <div className="max-h-[calc(100vh-220px)] overflow-y-auto pr-1 space-y-1.5">
+            {/* All suppliers option */}
+            <button
+              type="button"
+              onClick={() => setSelectedSupplierId(null)}
+              className={`w-full text-left rounded-xl border px-3 py-2.5 transition hover:border-primary-light/50 hover:bg-sky-blue/20 dark:hover:bg-gray-700/50 ${
+                selectedSupplierId === null
+                  ? "border-primary-dark bg-sky-blue/30 dark:bg-gray-700"
+                  : "border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-800"
+              }`}
+            >
+              <span className="text-[13px] font-semibold text-dark-gray dark:text-gray-200">
+                All Suppliers
+              </span>
+              <p className="text-[11px] text-medium-gray dark:text-gray-400">
+                Global + supplier risks
+              </p>
+            </button>
+
+            {loadingSuppliers ? (
+              <div className="space-y-2 pt-2">
+                {[1, 2, 3].map((i) => (
+                  <div
+                    key={i}
+                    className="animate-pulse rounded-xl border border-light-gray dark:border-gray-700 p-3"
                   >
-                    {isAnalyzing ? "Analysing…" : "Run News Analysis"}
-                  </button>
+                    <div className="h-3 w-2/3 rounded bg-light-gray dark:bg-gray-700 mb-1.5" />
+                    <div className="h-2.5 w-1/2 rounded bg-light-gray dark:bg-gray-700" />
+                  </div>
+                ))}
+              </div>
+            ) : suppliers.length === 0 ? (
+              <p className="pt-2 text-[12px] text-medium-gray dark:text-gray-400">
+                No suppliers found.
+              </p>
+            ) : (
+              suppliers.map((s) => {
+                const level = (s.latestRiskLevel ?? "").toLowerCase();
+                const levelDot =
+                  level === "critical"
+                    ? "bg-red-500"
+                    : level === "high"
+                      ? "bg-orange-500"
+                      : level === "medium"
+                        ? "bg-yellow-500"
+                        : level === "low"
+                          ? "bg-green-500"
+                          : "bg-gray-400";
+
+                return (
                   <button
+                    key={s.id}
                     type="button"
-                    onClick={() => setNewsDevView((v) => !v)}
-                    className={`rounded-lg border px-3 py-1.5 text-[12px] font-medium transition ${
-                      newsDevView
-                        ? "border-primary-dark bg-primary-dark text-white dark:bg-primary-light dark:border-primary-light dark:text-gray-900"
-                        : "border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-700 text-dark-gray dark:text-gray-200 hover:bg-sky-blue/10"
+                    onClick={() => setSelectedSupplierId(s.id)}
+                    className={`w-full text-left rounded-xl border p-3 transition hover:border-primary-light/50 hover:bg-sky-blue/20 dark:hover:bg-gray-700/50 ${
+                      selectedSupplierId === s.id
+                        ? "border-primary-dark bg-sky-blue/30 dark:bg-gray-700"
+                        : "border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-800"
                     }`}
                   >
-                    {newsDevView ? "← Card View" : "Dev View { }"}
-                  </button>
-                </div>
-              </>
-            )}
-
-            {activeTab === "trends" && (
-              <>
-                {trendResult && !loadingTrends && (
-                  <TrendSummary insights={trendResult.insights} />
-                )}
-                <div className="ml-auto flex gap-2">
-                  <button
-                    type="button"
-                    onClick={handleRunTrendAnalysis}
-                    disabled={loadingTrends || !selectedSupplierId}
-                    title={
-                      !selectedSupplierId
-                        ? "Select a supplier to run trend analysis"
-                        : undefined
-                    }
-                    className="rounded-lg border border-primary-dark bg-primary-dark px-3 py-1.5 text-[12px] font-medium text-white transition hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-primary-light dark:border-primary-light dark:text-gray-900"
-                  >
-                    {loadingTrends ? (
-                      <span className="flex items-center gap-1.5">
-                        <svg
-                          className="h-3 w-3 animate-spin"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                        >
-                          <circle
-                            className="opacity-25"
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                          />
-                          <path
-                            className="opacity-75"
-                            fill="currentColor"
-                            d="M4 12a8 8 0 018-8v8H4z"
-                          />
-                        </svg>
-                        Analysing…
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span
+                        className={`h-2 w-2 shrink-0 rounded-full ${levelDot}`}
+                      />
+                      <span className="text-[13px] font-medium text-dark-gray dark:text-gray-200 truncate">
+                        {s.name}
                       </span>
-                    ) : (
-                      "Run Trend Analysis"
-                    )}
+                    </div>
+                    <div className="flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-medium-gray dark:text-gray-400 pl-4">
+                      {s.city && <span>{s.city}</span>}
+                      {s.country && <span>{s.country}</span>}
+                      {s.commodities && (
+                        <span
+                          className="truncate max-w-[120px]"
+                          title={s.commodities}
+                        >
+                          {s.commodities.split(",")[0].trim()}
+                        </span>
+                      )}
+                    </div>
                   </button>
-                  {trendResult && (
+                );
+              })
+            )}
+          </div>
+        </section>
+
+        {/* ── Right: tabbed feed ───────────────────────────────────────────── */}
+        <section className="flex flex-col gap-4 min-w-0">
+          {/* ── Tab header ─────────────────────────────────────────────────── */}
+          <div className="rounded-2xl border border-light-gray dark:border-gray-600 bg-white dark:bg-gray-800 px-5 py-4 shadow-sm">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              {/* Title */}
+              <div className="min-w-0">
+                <h2 className="heading-3 text-dark-gray dark:text-gray-200 uppercase tracking-wider truncate">
+                  {selectedSupplier ? selectedSupplier.name : "All Suppliers"}
+                </h2>
+                <p className="text-[12px] text-medium-gray dark:text-gray-400 mt-0.5">
+                  {selectedSupplier
+                    ? `Analysis for ${selectedSupplier.name}`
+                    : "All news-sourced supply chain risks"}
+                </p>
+              </div>
+
+              {/* Tab switcher */}
+              <div className="flex shrink-0 rounded-lg border border-light-gray dark:border-gray-600 overflow-hidden text-[12px] font-medium self-start">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("news")}
+                  className={`px-4 py-2 transition ${
+                    activeTab === "news"
+                      ? "bg-primary-dark text-white dark:bg-primary-light dark:text-gray-900"
+                      : "bg-white dark:bg-gray-800 text-dark-gray dark:text-gray-200 hover:bg-off-white dark:hover:bg-gray-700"
+                  }`}
+                >
+                  📰 News Risks
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("trends")}
+                  className={`px-4 py-2 border-l border-light-gray dark:border-gray-600 transition ${
+                    activeTab === "trends"
+                      ? "bg-primary-dark text-white dark:bg-primary-light dark:text-gray-900"
+                      : "bg-white dark:bg-gray-800 text-dark-gray dark:text-gray-200 hover:bg-off-white dark:hover:bg-gray-700"
+                  }`}
+                >
+                  ✦ Trend Insights
+                </button>
+              </div>
+            </div>
+
+            {/* Tab-specific toolbar */}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {activeTab === "news" && (
+                <>
+                  {!loadingRisks && risks.length > 0 && (
+                    <SeveritySummary risks={risks} />
+                  )}
+                  <div className="ml-auto flex gap-2">
                     <button
                       type="button"
-                      onClick={() => setTrendsDevView((v) => !v)}
+                      onClick={handleRunAnalysis}
+                      disabled={isAnalyzing}
+                      className="rounded-lg border border-primary-dark bg-primary-dark px-3 py-1.5 text-[12px] font-medium text-white transition hover:opacity-90 disabled:opacity-60 dark:bg-primary-light dark:border-primary-light dark:text-gray-900"
+                    >
+                      {isAnalyzing ? "Analysing…" : "Run News Analysis"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewsDevView((v) => !v)}
                       className={`rounded-lg border px-3 py-1.5 text-[12px] font-medium transition ${
-                        trendsDevView
+                        newsDevView
                           ? "border-primary-dark bg-primary-dark text-white dark:bg-primary-light dark:border-primary-light dark:text-gray-900"
                           : "border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-700 text-dark-gray dark:text-gray-200 hover:bg-sky-blue/10"
                       }`}
                     >
-                      {trendsDevView ? "← Card View" : "Dev View { }"}
+                      {newsDevView ? "← Card View" : "Dev View { }"}
                     </button>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* ── NEWS TAB ───────────────────────────────────────────────────── */}
-        {activeTab === "news" && (
-          <>
-            {isAnalyzing && (
-              <div className="flex items-center gap-3 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-900/20 px-4 py-3 text-[13px] text-sky-800 dark:text-sky-300">
-                <svg
-                  className="h-4 w-4 animate-spin shrink-0"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8v8H4z"
-                  />
-                </svg>
-                Fetching news from NewsAPI &amp; GDELT and running LLM risk
-                extraction — this may take 30–60 seconds…
-              </div>
-            )}
-            {!isAnalyzing && lastNewsResult && (
-              <div className="flex items-center gap-2 rounded-xl border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 px-4 py-3 text-[13px] text-green-800 dark:text-green-300">
-                <span>✓</span>
-                <span>
-                  Analysis complete —{" "}
-                  <strong>{lastNewsResult.risksCreated}</strong> risk
-                  {lastNewsResult.risksCreated !== 1 ? "s" : ""} and{" "}
-                  <strong>{lastNewsResult.opportunitiesCreated}</strong>{" "}
-                  opportunit
-                  {lastNewsResult.opportunitiesCreated !== 1 ? "ies" : "y"}{" "}
-                  created.
-                </span>
-              </div>
-            )}
-            {analyzeError && (
-              <div className="flex items-start gap-2 rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-4 py-3 text-[13px] text-red-800 dark:text-red-300">
-                <span className="shrink-0">⚠</span>
-                <span>{analyzeError}</span>
-              </div>
-            )}
-            {loadingRisks && (
-              <div className="space-y-3">
-                {[1, 2, 3].map((i) => (
-                  <div
-                    key={i}
-                    className="animate-pulse rounded-xl border border-light-gray dark:border-gray-700 p-4"
-                  >
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="h-3.5 w-2/3 rounded bg-light-gray dark:bg-gray-700" />
-                      <div className="h-5 w-16 rounded bg-light-gray dark:bg-gray-700" />
-                    </div>
-                    <div className="space-y-1.5">
-                      <div className="h-2.5 w-full rounded bg-light-gray dark:bg-gray-700" />
-                      <div className="h-2.5 w-4/5 rounded bg-light-gray dark:bg-gray-700" />
-                    </div>
                   </div>
-                ))}
-              </div>
-            )}
-            {!loadingRisks &&
-              (newsDevView ? (
-                <DevView
-                  risks={risks}
-                  copied={newsCopied}
-                  onCopy={handleNewsCopy}
-                />
-              ) : risks.length === 0 ? (
-                <EmptyState supplierId={selectedSupplierId} />
-              ) : (
-                <div className="space-y-3">
-                  {risks.map((risk) => (
-                    <NewsRiskCard key={risk.id} risk={risk} />
-                  ))}
-                </div>
-              ))}
-          </>
-        )}
+                </>
+              )}
 
-        {/* ── TRENDS TAB ────────────────────────────────────────────────── */}
-        {activeTab === "trends" && (
-          <>
-            {/* Select-supplier prompt */}
-            {!selectedSupplierId && (
-              <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-light-gray dark:border-gray-600 py-16 text-center">
-                <div className="rounded-full bg-violet-100 dark:bg-violet-900/30 p-3">
+              {activeTab === "trends" && (
+                <>
+                  {trendResult && !loadingTrends && (
+                    <TrendSummary insights={trendResult.insights} />
+                  )}
+                  <div className="ml-auto flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handleRunTrendAnalysis}
+                      disabled={loadingTrends || !selectedSupplierId}
+                      title={
+                        !selectedSupplierId
+                          ? "Select a supplier to run trend analysis"
+                          : undefined
+                      }
+                      className="rounded-lg border border-primary-dark bg-primary-dark px-3 py-1.5 text-[12px] font-medium text-white transition hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed dark:bg-primary-light dark:border-primary-light dark:text-gray-900"
+                    >
+                      {loadingTrends ? (
+                        <span className="flex items-center gap-1.5">
+                          <svg
+                            className="h-3 w-3 animate-spin"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                          >
+                            <circle
+                              className="opacity-25"
+                              cx="12"
+                              cy="12"
+                              r="10"
+                              stroke="currentColor"
+                              strokeWidth="4"
+                            />
+                            <path
+                              className="opacity-75"
+                              fill="currentColor"
+                              d="M4 12a8 8 0 018-8v8H4z"
+                            />
+                          </svg>
+                          Analysing…
+                        </span>
+                      ) : (
+                        "Run Trend Analysis"
+                      )}
+                    </button>
+                    {trendResult && (
+                      <button
+                        type="button"
+                        onClick={() => setTrendsDevView((v) => !v)}
+                        className={`rounded-lg border px-3 py-1.5 text-[12px] font-medium transition ${
+                          trendsDevView
+                            ? "border-primary-dark bg-primary-dark text-white dark:bg-primary-light dark:border-primary-light dark:text-gray-900"
+                            : "border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-700 text-dark-gray dark:text-gray-200 hover:bg-sky-blue/10"
+                        }`}
+                      >
+                        {trendsDevView ? "← Card View" : "Dev View { }"}
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* ── NEWS TAB ───────────────────────────────────────────────────── */}
+          {activeTab === "news" && (
+            <>
+              {isAnalyzing && (
+                <div className="flex items-center gap-3 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-900/20 px-4 py-3 text-[13px] text-sky-800 dark:text-sky-300">
                   <svg
-                    className="h-8 w-8 text-violet-600 dark:text-violet-400"
-                    fill="none"
+                    className="h-4 w-4 animate-spin shrink-0"
                     viewBox="0 0 24 24"
-                    stroke="currentColor"
+                    fill="none"
                   >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    />
                     <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={1.5}
-                      d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8v8H4z"
                     />
                   </svg>
+                  Fetching news from NewsAPI &amp; GDELT and running LLM risk
+                  extraction — this may take 30–60 seconds…
                 </div>
-                <p className="text-[14px] font-medium text-dark-gray dark:text-gray-200">
-                  Select a supplier
-                </p>
-                <p className="text-[12px] text-medium-gray dark:text-gray-400 max-w-xs">
-                  Choose a supplier from the left panel to run an AI trend
-                  analysis scoped to their commodities and region.
-                </p>
-              </div>
-            )}
-
-            {/* Loading skeleton */}
-            {loadingTrends && (
-              <div className="space-y-3">
-                {[1, 2, 3].map((i) => (
-                  <div
-                    key={i}
-                    className="animate-pulse rounded-xl border border-light-gray dark:border-gray-700 p-4"
-                  >
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="h-3.5 w-2/3 rounded bg-light-gray dark:bg-gray-700" />
-                      <div className="h-5 w-20 rounded bg-light-gray dark:bg-gray-700" />
+              )}
+              {!isAnalyzing && lastNewsResult && (
+                <div className="flex items-center gap-2 rounded-xl border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 px-4 py-3 text-[13px] text-green-800 dark:text-green-300">
+                  <span>✓</span>
+                  <span>
+                    Analysis complete —{" "}
+                    <strong>{lastNewsResult.risksCreated}</strong> risk
+                    {lastNewsResult.risksCreated !== 1 ? "s" : ""} and{" "}
+                    <strong>{lastNewsResult.opportunitiesCreated}</strong>{" "}
+                    opportunit
+                    {lastNewsResult.opportunitiesCreated !== 1
+                      ? "ies"
+                      : "y"}{" "}
+                    created.
+                  </span>
+                </div>
+              )}
+              {analyzeError && (
+                <div className="flex items-start gap-2 rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-4 py-3 text-[13px] text-red-800 dark:text-red-300">
+                  <span className="shrink-0">⚠</span>
+                  <span>{analyzeError}</span>
+                </div>
+              )}
+              {loadingRisks && (
+                <div className="space-y-3">
+                  {[1, 2, 3].map((i) => (
+                    <div
+                      key={i}
+                      className="animate-pulse rounded-xl border border-light-gray dark:border-gray-700 p-4"
+                    >
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="h-3.5 w-2/3 rounded bg-light-gray dark:bg-gray-700" />
+                        <div className="h-5 w-16 rounded bg-light-gray dark:bg-gray-700" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <div className="h-2.5 w-full rounded bg-light-gray dark:bg-gray-700" />
+                        <div className="h-2.5 w-4/5 rounded bg-light-gray dark:bg-gray-700" />
+                      </div>
                     </div>
-                    <div className="space-y-1.5">
-                      <div className="h-2.5 w-full rounded bg-light-gray dark:bg-gray-700" />
-                      <div className="h-2.5 w-4/5 rounded bg-light-gray dark:bg-gray-700" />
-                      <div className="h-2.5 w-3/5 rounded bg-light-gray dark:bg-gray-700" />
-                    </div>
+                  ))}
+                </div>
+              )}
+              {!loadingRisks &&
+                (newsDevView ? (
+                  <DevView
+                    risks={risks}
+                    copied={newsCopied}
+                    onCopy={handleNewsCopy}
+                  />
+                ) : risks.length === 0 ? (
+                  <EmptyState supplierId={selectedSupplierId} />
+                ) : (
+                  <div className="space-y-3">
+                    {risks.map((risk) => (
+                      <NewsRiskCard key={risk.id} risk={risk} />
+                    ))}
                   </div>
                 ))}
-                <div className="rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-900/20 px-4 py-3 text-[13px] text-sky-800 dark:text-sky-300">
-                  Running LLM trend analysis for {selectedSupplier?.name} —
-                  fetching news signals and generating structured insights…
-                </div>
-              </div>
-            )}
+            </>
+          )}
 
-            {/* Error */}
-            {!loadingTrends && trendError && (
-              <div className="flex items-start gap-2 rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-4 py-3 text-[13px] text-red-800 dark:text-red-300">
-                <span className="shrink-0">⚠</span>
-                <span>{trendError}</span>
-              </div>
-            )}
-
-            {/* Idle prompt (supplier selected, not yet run) */}
-            {!loadingTrends &&
-              !trendError &&
-              !trendResult &&
-              selectedSupplierId && (
-                <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-violet-200 dark:border-violet-800 py-16 text-center bg-violet-50/30 dark:bg-violet-900/10">
+          {/* ── TRENDS TAB ────────────────────────────────────────────────── */}
+          {activeTab === "trends" && (
+            <>
+              {/* Select-supplier prompt */}
+              {!selectedSupplierId && (
+                <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-light-gray dark:border-gray-600 py-16 text-center">
+                  <div className="rounded-full bg-violet-100 dark:bg-violet-900/30 p-3">
+                    <svg
+                      className="h-8 w-8 text-violet-600 dark:text-violet-400"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={1.5}
+                        d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+                      />
+                    </svg>
+                  </div>
                   <p className="text-[14px] font-medium text-dark-gray dark:text-gray-200">
-                    Ready to analyse{" "}
-                    <span className="text-primary-dark dark:text-primary-light">
-                      {selectedSupplier?.name}
-                    </span>
+                    Select a supplier
                   </p>
                   <p className="text-[12px] text-medium-gray dark:text-gray-400 max-w-xs">
-                    Click <strong>Run Trend Analysis</strong> above to fetch
-                    live news signals and generate AI-powered trend insights for
-                    this supplier&apos;s commodities and region.
+                    Choose a supplier from the left panel to run an AI trend
+                    analysis scoped to their commodities and region.
                   </p>
                 </div>
               )}
 
-            {/* Results */}
-            {!loadingTrends &&
-              trendResult &&
-              (trendsDevView ? (
-                <TrendDevView
-                  result={trendResult}
-                  copied={trendsCopied}
-                  onCopy={handleTrendsCopy}
-                />
-              ) : trendResult.insights.length === 0 ? (
-                <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-light-gray dark:border-gray-600 py-16 text-center">
-                  <p className="text-[14px] font-medium text-dark-gray dark:text-gray-200">
-                    No insights generated
-                  </p>
-                  <p className="text-[12px] text-medium-gray dark:text-gray-400 max-w-xs">
-                    The LLM could not generate insights for this supplier. Try
-                    again or check the server logs.
-                  </p>
-                </div>
-              ) : (
+              {/* Loading skeleton */}
+              {loadingTrends && (
                 <div className="space-y-3">
-                  {trendResult.insights.map((insight) => (
-                    <TrendInsightCard key={insight.id} insight={insight} />
+                  {[1, 2, 3].map((i) => (
+                    <div
+                      key={i}
+                      className="animate-pulse rounded-xl border border-light-gray dark:border-gray-700 p-4"
+                    >
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="h-3.5 w-2/3 rounded bg-light-gray dark:bg-gray-700" />
+                        <div className="h-5 w-20 rounded bg-light-gray dark:bg-gray-700" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <div className="h-2.5 w-full rounded bg-light-gray dark:bg-gray-700" />
+                        <div className="h-2.5 w-4/5 rounded bg-light-gray dark:bg-gray-700" />
+                        <div className="h-2.5 w-3/5 rounded bg-light-gray dark:bg-gray-700" />
+                      </div>
+                    </div>
                   ))}
+                  <div className="rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-900/20 px-4 py-3 text-[13px] text-sky-800 dark:text-sky-300">
+                    Running LLM trend analysis for {selectedSupplier?.name} —
+                    fetching news signals and generating structured insights…
+                  </div>
                 </div>
-              ))}
-          </>
-        )}
-      </section>
-    </main>
+              )}
+
+              {/* Error */}
+              {!loadingTrends && trendError && (
+                <div className="flex items-start gap-2 rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-4 py-3 text-[13px] text-red-800 dark:text-red-300">
+                  <span className="shrink-0">⚠</span>
+                  <span>{trendError}</span>
+                </div>
+              )}
+
+              {/* Idle prompt (supplier selected, not yet run) */}
+              {!loadingTrends &&
+                !trendError &&
+                !trendResult &&
+                selectedSupplierId && (
+                  <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-violet-200 dark:border-violet-800 py-16 text-center bg-violet-50/30 dark:bg-violet-900/10">
+                    <p className="text-[14px] font-medium text-dark-gray dark:text-gray-200">
+                      Ready to analyse{" "}
+                      <span className="text-primary-dark dark:text-primary-light">
+                        {selectedSupplier?.name}
+                      </span>
+                    </p>
+                    <p className="text-[12px] text-medium-gray dark:text-gray-400 max-w-xs">
+                      Click <strong>Run Trend Analysis</strong> above to fetch
+                      live news signals and generate AI-powered trend insights
+                      for this supplier&apos;s commodities and region.
+                    </p>
+                  </div>
+                )}
+
+              {/* Results */}
+              {!loadingTrends &&
+                trendResult &&
+                (trendsDevView ? (
+                  <TrendDevView
+                    result={trendResult}
+                    copied={trendsCopied}
+                    onCopy={handleTrendsCopy}
+                  />
+                ) : trendResult.insights.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-light-gray dark:border-gray-600 py-16 text-center">
+                    <p className="text-[14px] font-medium text-dark-gray dark:text-gray-200">
+                      No insights generated
+                    </p>
+                    <p className="text-[12px] text-medium-gray dark:text-gray-400 max-w-xs">
+                      The LLM could not generate insights for this supplier. Try
+                      again or check the server logs.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {trendResult.insights.map((insight) => (
+                      <TrendInsightCard key={insight.id} insight={insight} />
+                    ))}
+                  </div>
+                ))}
+            </>
+          )}
+        </section>
+      </main>
     </div>
   );
 }

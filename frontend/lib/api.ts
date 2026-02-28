@@ -363,6 +363,127 @@ export const trendInsightsApi = {
       .then((res) => res.data),
 };
 
+// Supplier Metrics — full visibility per supplier scoped to latest workflow run
+export interface WorkflowRunInfo {
+  id: string;
+  runDate: string | null;
+  runIndex: number | null;
+  createdAt: string | null;
+}
+
+export interface RiskAnalysisInfo {
+  id: string;
+  riskScore: number;
+  description: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string | null;
+}
+
+export interface MetricsRisk {
+  id: string;
+  title: string;
+  description: string;
+  severity: string;
+  status: string;
+  sourceType: string;
+  sourceData?: Record<string, unknown> | null;
+  affectedRegion?: string | null;
+  affectedSupplier?: string | null;
+  impactDescription?: string | null;
+  estimatedImpact?: string | null;
+  estimatedCost?: number | null;
+  createdAt: string | null;
+}
+
+export interface MetricsOpportunity {
+  id: string;
+  title: string;
+  description: string;
+  type: string;
+  status: string;
+  sourceType: string;
+  sourceData?: Record<string, unknown> | null;
+  affectedRegion?: string | null;
+  impactDescription?: string | null;
+  potentialBenefit?: string | null;
+  estimatedValue?: number | null;
+  createdAt: string | null;
+}
+
+export interface MetricsSwarmAnalysis {
+  id: string;
+  finalScore: number;
+  riskLevel: string;
+  topDrivers: string[];
+  mitigationPlan: string[];
+  agents: SwarmAgentResult[];
+  createdAt: string | null;
+}
+
+export interface MetricsSupplyChainScore {
+  id: string;
+  overallScore: number;
+  breakdown: Record<string, number> | null;
+  severityCounts: Record<string, number> | null;
+  summary: string | null;
+  createdAt: string | null;
+}
+
+export interface MetricsMitigationPlan {
+  id: string;
+  title: string;
+  description: string;
+  actions: string[];
+  status: string;
+  assignedTo?: string | null;
+  dueDate?: string | null;
+  createdAt: string | null;
+}
+
+export interface SupplierMetrics {
+  supplier: {
+    id: string;
+    name: string;
+    location?: string | null;
+    city?: string | null;
+    country?: string | null;
+    region?: string | null;
+    commodities?: string | null;
+    latestRiskScore?: number | null;
+    latestRiskLevel?: string | null;
+  };
+  workflowRun: WorkflowRunInfo | null;
+  riskAnalysis: RiskAnalysisInfo | null;
+  risks: MetricsRisk[];
+  risksSummary: { total: number; bySeverity: Record<string, number> };
+  opportunities: MetricsOpportunity[];
+  swarmAnalysis: MetricsSwarmAnalysis | null;
+  supplyChainScore: MetricsSupplyChainScore | null;
+  mitigationPlans: MetricsMitigationPlan[];
+}
+
+// Supplier Risk Analysis History
+export interface RiskHistoryEntry {
+  id: string;
+  workflowRunId: string | null;
+  riskScore: number;
+  description: string | null;
+  createdAt: string | null;
+  workflowRun: {
+    runDate: string | null;
+    runIndex: number | null;
+  } | null;
+  risksSummary: {
+    total: number;
+    bySeverity: Record<string, number>;
+  };
+  opportunitiesCount: number;
+  swarmSummary: {
+    finalScore: number | null;
+    riskLevel: string | null;
+  } | null;
+}
+
 export const suppliersApi = {
   uploadCsv: (file: File) => {
     const formData = new FormData();
@@ -380,6 +501,16 @@ export const suppliersApi = {
   getAll: () => api.get<Supplier[]>("/suppliers").then((res) => res.data),
   getById: (id: string) =>
     api.get<Supplier | null>(`/suppliers/${id}`).then((res) => res.data),
+  getMetrics: (id: string) =>
+    api
+      .get<SupplierMetrics>(`/suppliers/${id}/metrics`)
+      .then((res) => res.data),
+  getHistory: (id: string, limit = 20) =>
+    api
+      .get<RiskHistoryEntry[]>(`/suppliers/${id}/history`, {
+        params: { limit },
+      })
+      .then((res) => res.data),
   update: (id: string, data: SupplierUpdatePayload) =>
     api.put<Supplier>(`/suppliers/${id}`, data).then((res) => res.data),
   delete: (id: string) => api.delete(`/suppliers/${id}`),

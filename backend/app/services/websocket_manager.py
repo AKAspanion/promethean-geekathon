@@ -42,7 +42,6 @@ class ConnectionManager:
         dead_connections: list[WebSocket] = []
         for connection in list(self.active_connections):
             try:
-                logger.info("Broadcasting message to connection: %s", message)
                 await connection.send_json(message)
             except WebSocketDisconnect:
                 dead_connections.append(connection)

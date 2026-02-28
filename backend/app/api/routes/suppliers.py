@@ -16,6 +16,8 @@ from app.services.suppliers import (
     get_risks_by_supplier,
     get_latest_risk_analysis_by_supplier,
     get_latest_swarm_by_supplier,
+    get_supplier_metrics,
+    get_supplier_risk_history,
 )
 
 
@@ -81,6 +83,62 @@ def list_suppliers(
         }
         for s in suppliers
     ]
+
+
+@router.get("/{id}/history")
+def supplier_history(
+    id: UUID,
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    oem: Oem = Depends(get_current_oem),
+):
+    """Risk analysis history for a supplier across workflow runs."""
+    supplier = get_one(db, id, oem.id)
+    if not supplier:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+    return get_supplier_risk_history(db, id, oem.id, limit=limit)
+
+
+@router.get("/{id}/metrics")
+def supplier_metrics(
+    id: UUID,
+    db: Session = Depends(get_db),
+    oem: Oem = Depends(get_current_oem),
+):
+    """Full supplier metrics scoped to the latest workflow run."""
+    supplier = get_one(db, id, oem.id)
+    if not supplier:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+    metrics = get_supplier_metrics(db, id, oem.id)
+    if not metrics:
+        return {
+            "supplier": {
+                "id": str(supplier.id),
+                "name": supplier.name,
+            },
+            "workflowRun": None,
+            "riskAnalysis": None,
+            "risks": [],
+            "risksSummary": {"total": 0, "bySeverity": {}},
+            "opportunities": [],
+            "swarmAnalysis": None,
+            "supplyChainScore": None,
+            "mitigationPlans": [],
+        }
+    return {
+        "supplier": {
+            "id": str(supplier.id),
+            "name": supplier.name,
+            "location": supplier.location,
+            "city": supplier.city,
+            "country": supplier.country,
+            "region": supplier.region,
+            "commodities": supplier.commodities,
+            "latestRiskScore": float(supplier.latestRiskScore) if supplier.latestRiskScore is not None else None,
+            "latestRiskLevel": supplier.latestRiskLevel,
+        },
+        **metrics,
+    }
 
 
 @router.get("/{id}")
