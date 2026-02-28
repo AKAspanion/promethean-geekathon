@@ -180,33 +180,7 @@ flowchart LR
 
 ---
 
-## 6. Legacy Weather Risk Agent (app/agent/graph.py)
-
-Defined in `backend/app/agents/legacy_weather.py`. Used for single-city weather risk (e.g. “assess supply chain weather risk for city X”). Tool-calling loop: agent → tools or fallback_tools → back to agent until no tool calls.
-
-```mermaid
-flowchart TB
-    START([START]) --> Agent["agent\n(ChatOllama + get_weather,\ncompute_supply_chain_risk)"]
-    Agent --> ShouldContinue{"_should_continue"}
-    ShouldContinue -->|"tool_calls"| Tools["tools\n(ToolNode: get_weather,\ncompute_supply_chain_risk)"]
-    ShouldContinue -->|"fallback_tools"| Fallback["fallback_tools\n(fetch weather + risk,\ninject ToolMessages)"]
-    ShouldContinue -->|"end"| END([END])
-    Tools --> Agent
-    Fallback --> Agent
-
-    style Agent fill:#e3f2fd
-    style Tools fill:#fff8e1
-    style Fallback fill:#f3e5f5
-```
-
-- **State:** `AgentState` (messages, city, weather_data, risk_dict).
-- **Tools:** `get_weather(city)`, `compute_supply_chain_risk(weather_key)`.
-- **Entry:** `run_weather_risk_agent(city)` (from `app.agents.legacy_weather`) with system + user message.
-- **Exit:** Final state with `weather_data`, `risk_dict`, and optional `llm_summary` (from last AI message or a fallback summary prompt).
-
----
-
-## 7. Data flow summary
+## 6. Data flow summary
 
 | Stage            | Inputs                          | Outputs / Next stage                    |
 |-----------------|----------------------------------|-----------------------------------------|
@@ -229,8 +203,7 @@ flowchart TB
 | **Trigger**            | `backend/app/api/routes/agent.py` |
 | **Orchestration**      | `backend/app/orchestration/agent_service.py` |
 | **Data layer**         | `backend/app/data/` (manager.py, base.py, weather.py, news.py, traffic.py, market.py, shipping.py, trends.py, excel.py) |
-| **Domain agents**      | `backend/app/agents/` (weather.py, news.py, shipment.py, legacy_weather.py) |
+| **Domain agents**      | `backend/app/agents/` (weather.py, news.py, shipment.py) |
 | **Persistence / plans** | `backend/app/services/agent_orchestrator.py`, `mitigation_plans.py`, `risks.py`, `opportunities.py` |
 | **Broadcast**          | `backend/app/services/websocket_manager.py` |
 
-Backward compatibility: `app.agent` re-exports `run_weather_risk_agent` and `run_weather_agent` from `app.agents`.

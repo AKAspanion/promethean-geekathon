@@ -1,20 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
 import {
-  WeatherRiskForm,
-  LocationWeatherCard,
-  RiskSummaryCard,
-  AgentSummaryCard,
   RiskFactorsGrid,
   ShipmentForm,
   ShipmentTimeline,
   ShipmentExposureSummary,
 } from '@/components/WeatherAgentComponents';
-import { fetchWeatherRisk, fetchShipmentWeatherExposure } from '@/lib/api';
+import { fetchShipmentWeatherExposure } from '@/lib/api';
 import type {
-  WeatherRiskResponse,
   ShipmentInput,
   ShipmentWeatherExposureResponse,
 } from '@/lib/types';
@@ -22,11 +16,6 @@ import type {
 const today = new Date().toISOString().split('T')[0];
 
 export default function WeatherPage() {
-  const [city, setCity] = useState('New Delhi');
-  const [cityLoading, setCityLoading] = useState(false);
-  const [cityError, setCityError] = useState<string | null>(null);
-  const [cityData, setCityData] = useState<WeatherRiskResponse | null>(null);
-
   const [shipmentInput, setShipmentInput] = useState<ShipmentInput>({
     supplier_city: 'Chennai',
     oem_city: 'Stuttgart',
@@ -37,21 +26,6 @@ export default function WeatherPage() {
   const [shipmentError, setShipmentError] = useState<string | null>(null);
   const [shipmentData, setShipmentData] = useState<ShipmentWeatherExposureResponse | null>(null);
   const [payloadCopied, setPayloadCopied] = useState(false);
-
-  async function handleCitySubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setCityLoading(true);
-    setCityError(null);
-    setCityData(null);
-    try {
-      const result = await fetchWeatherRisk(city);
-      setCityData(result);
-    } catch (err) {
-      setCityError(err instanceof Error ? err.message : 'Something went wrong.');
-    } finally {
-      setCityLoading(false);
-    }
-  }
 
   async function handleShipmentSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -124,32 +98,6 @@ export default function WeatherPage() {
               }
             />
           </>
-        )}
-        <div className="flex flex-col gap-4 rounded-2xl border border-light-gray dark:border-gray-600 bg-white dark:bg-gray-800 p-5 shadow-sm">
-          <h3 className="text-[18px] font-semibold text-dark-gray dark:text-gray-200">City Risk</h3>
-          <WeatherRiskForm
-            city={city}
-            onCityChange={setCity}
-            onSubmit={handleCitySubmit}
-            loading={cityLoading}
-            error={cityError}
-          />
-        </div>
-        {cityData && (
-          <div className="space-y-5">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-[1.4fr,1.6fr]">
-              <LocationWeatherCard location={cityData.location} weather={cityData.weather} />
-              <RiskSummaryCard
-                overallLevel={cityData.risk.overall_level}
-                overallScore={cityData.risk.overall_score}
-                primaryConcerns={cityData.risk.primary_concerns}
-              />
-            </div>
-            {cityData.agent_summary && (
-              <AgentSummaryCard summary={cityData.agent_summary} />
-            )}
-            <RiskFactorsGrid factors={cityData.risk.factors} />
-          </div>
         )}
       </div>
     </main>
