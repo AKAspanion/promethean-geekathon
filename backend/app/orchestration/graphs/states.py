@@ -19,6 +19,7 @@ class SupplierRiskState(TypedDict, total=False):
     raw_news_data: dict      # {"news": [...]}  — supplier context
     raw_global_news_data: dict  # {"news": [...]}  — global context
     raw_shipping_data: dict  # {"shipping": [...]}
+    prefetched_broad_headlines: list  # optional; when set, news agent skips broad-headline API
 
     # Per-domain agent outputs (populated by run_agents node)
     weather_risks: list[dict]
@@ -27,6 +28,7 @@ class SupplierRiskState(TypedDict, total=False):
     news_supplier_opportunities: list[dict]
     news_global_risks: list[dict]
     shipping_risks: list[dict]
+    geopolitical_risks: list[dict]  # from active_conflicts when supplier country matches
 
     # Merged outputs (populated by merge_and_score node)
     all_risks: list[dict]
@@ -78,6 +80,9 @@ class OemOrchestrationState(TypedDict, total=False):
     # Supplier contexts are consumed one at a time via a conditional loop.
     remaining_contexts: list[SupplierWorkflowContext]
     processed_contexts: list[SupplierWorkflowContext]
+
+    # Broad headlines fetched once per OEM and passed to each supplier (avoids 429).
+    shared_broad_headlines: list
 
     # Accumulated per-supplier results (appended in process_next_supplier).
     supplier_results: list[SupplierRiskResult]

@@ -82,6 +82,7 @@ from app.services.websocket_manager import (
     broadcast_suppliers_snapshot,
 )
 from app.data.manager import get_data_source_manager
+from app.data.news import NewsDataSource
 from app.orchestration.graphs.states import (
     OemOrchestrationState,
     SupplierRiskResult,
@@ -224,7 +225,7 @@ async def _broadcast_suppliers(db: Session, oem_id: UUID) -> None:
     suppliers = get_suppliers(db, oem_id)
     if not suppliers:
         return
-    risk_map = get_risks_by_supplier(db)
+    risk_map = get_risks_by_supplier(db, oem_id)
     swarm_map = get_latest_swarm_by_supplier(db, oem_id)
     payload = [
         {
@@ -288,6 +289,22 @@ async def _process_next_supplier(
 
     logger.info("OemOrchestrationGraph: starting supplier '%s'", label)
 
+    # ── Broad headlines once per OEM (avoids 429 when running news agent per supplier)
+    shared_headlines = state.get("shared_broad_headlines")
+    if shared_headlines is None:
+        try:
+            source = NewsDataSource()
+            await source.initialize({})
+            results = await source.fetch_broad_headlines()
+            shared_headlines = [r.to_dict() for r in results]
+            logger.info(
+                "OemOrchestrationGraph: fetched %d broad headlines once for OEM",
+                len(shared_headlines),
+            )
+        except Exception as exc:
+            logger.warning("OemOrchestrationGraph: broad headlines fetch failed: %s", exc)
+            shared_headlines = []
+
     # ── 1. Fetch data ──────────────────────────────────────────────────────────
     _update_status(
         db, agent_status_id,
@@ -312,6 +329,7 @@ async def _process_next_supplier(
         "raw_news_data": fetched["news"],
         "raw_global_news_data": fetched["global_news"],
         "raw_shipping_data": fetched["shipping"],
+        "prefetched_broad_headlines": shared_headlines,
     }
     final: SupplierRiskState = await SUPPLIER_RISK_GRAPH.ainvoke(initial)  # type: ignore[assignment]
 
@@ -434,6 +452,7 @@ async def _process_next_supplier(
         "remaining_contexts": remaining,
         "processed_contexts": processed,
         "supplier_results": (state.get("supplier_results") or []) + [result],
+        "shared_broad_headlines": shared_headlines,
     }
 
 

@@ -59,6 +59,7 @@ DOMAIN_WEIGHTS = {
     "weather": 1.0,
     "shipping": 1.3,
     "news": 1.1,
+    "geopolitical": 1.5,
 }
 
 # Controls the curvature of the non-linear escalation function:
@@ -389,8 +390,12 @@ def _compute_risk_score(risks: list) -> tuple[float, dict, dict]:
                     pointer_boost = 1.2
         elif src == "news":
             risk_type = (src_data or {}).get("risk_type")
-            if risk_type in {"factory_shutdown", "bankruptcy_risk", "sanction_risk"}:
+            if risk_type in {"war", "armed_conflict"}:
+                pointer_boost = 1.5
+            elif risk_type in {"factory_shutdown", "bankruptcy_risk", "sanction_risk", "geopolitical_tension"}:
                 pointer_boost = 1.3
+        elif src == "geopolitical":
+            pointer_boost = 1.5  # active conflict exposure
 
         weight = sev_weight * domain_weight * pointer_boost
         base_weight += weight
@@ -486,7 +491,7 @@ async def _broadcast_suppliers_for_oem(db: Session, oem_id: UUID) -> None:
     suppliers = get_suppliers(db, oem_id)
     if not suppliers:
         return
-    risk_map = get_risks_by_supplier(db)
+    risk_map = get_risks_by_supplier(db, oem_id)
     swarm_map = get_latest_swarm_by_supplier(db, oem_id)
     suppliers_payload = [
         {

@@ -80,6 +80,7 @@ from app.services.websocket_manager import (
     broadcast_oem_risk_score,
     broadcast_suppliers_snapshot,
 )
+from app.data.active_conflicts import get_conflict_risks_for_supplier
 from app.orchestration.graphs.states import (
     RiskAnalysisState,
     RiskAnalysisSupplierResult,
@@ -95,7 +96,7 @@ logger = logging.getLogger(__name__)
 # Severity ordering for ranking top risks.
 _SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 _VALID_SEVERITIES = frozenset(_SEV_ORDER)
-_VALID_SOURCE_TYPES = frozenset({"news", "weather", "shipping", "traffic", "global_news"})
+_VALID_SOURCE_TYPES = frozenset({"news", "weather", "shipping", "traffic", "global_news", "geopolitical"})
 _VALID_OPP_TYPES = frozenset({
     "cost_saving", "time_saving", "quality_improvement",
     "market_expansion", "supplier_diversification",
@@ -507,6 +508,9 @@ Overall risk level: {risk_level}
 === NEWS RISKS ===
 {news_risks_json}
 
+=== GEOPOLITICAL / ACTIVE CONFLICT RISKS (supplier country in conflict zone) ===
+{geopolitical_risks_json}
+
 Analyze all risks above and produce a JSON object with this EXACT structure:
 
 {{
@@ -548,7 +552,7 @@ Analyze all risks above and produce a JSON object with this EXACT structure:
 }}
 
 Rules:
-- topDrivers: Pick the 3 most impactful risk titles across all agents, ordered by severity.
+- topDrivers: Pick the 3 most impactful risk titles across all agents, ordered by severity. When GEOPOLITICAL / ACTIVE CONFLICT RISKS are present (supplier country in conflict zone), at least one topDriver MUST reflect that (e.g. "Active conflict exposure: [Country]" or "Supplier in conflict-affected region"). When NEWS risks include war, armed conflict, or geopolitical events, also ensure they appear in topDrivers. Do not omit high-severity or geopolitical risks from topDrivers.
 - mitigationPlan: Generate 3-6 specific, actionable mitigation steps tailored to the detected risks. Reference specific risk types, regions, or suppliers. Do NOT use generic boilerplate.
 - Per-agent scores: If an agent has zero risks, set score=0, riskLevel=LOW, confidence=0.
 - Confidence: More risks with consistent signals = higher confidence. Single risk ~0.5, three+ consistent risks 0.7-0.9.
@@ -582,6 +586,9 @@ async def _llm_swarm_analysis(
     news_risks = [
         r for r in risk_dicts if r.get("sourceType") in ("news", "global_news")
     ]
+    geopolitical_risks = [
+        r for r in risk_dicts if r.get("sourceType") == "geopolitical"
+    ]
 
     def _summarize(risks: list[dict], limit: int = 10) -> str:
         if not risks:
@@ -604,6 +611,7 @@ async def _llm_swarm_analysis(
         "weather_risks_json": _summarize(weather_risks),
         "shipping_risks_json": _summarize(shipping_risks),
         "news_risks_json": _summarize(news_risks),
+        "geopolitical_risks_json": _summarize(geopolitical_risks),
     }
 
     provider = getattr(llm, "model_provider", None) or type(llm).__name__
@@ -729,7 +737,7 @@ async def _broadcast_suppliers(db: Session, oem_id: UUID) -> None:
     suppliers = get_suppliers(db, oem_id)
     if not suppliers:
         return
-    risk_map = get_risks_by_supplier(db)
+    risk_map = get_risks_by_supplier(db, oem_id)
     reasoning_map = get_latest_risk_analysis_by_supplier(db, oem_id)
     swarm_map = get_latest_swarm_by_supplier(db, oem_id)
     payload = [
@@ -845,13 +853,31 @@ async def _process_next_supplier(
         if normed is not None:
             all_risks.append(normed)
 
+    # Inject critical geopolitical (active conflict) risks when supplier country matches
+    countries_from_scope = scope.get("countries") or []
+    regions_from_scope = scope.get("regions") or []
+    geo_risks_raw = get_conflict_risks_for_supplier(
+        countries=countries_from_scope,
+        regions=regions_from_scope,
+        supplier_name=supplier_name,
+    )
+    for g in geo_risks_raw:
+        normed = _normalize_risk(g, default_source="geopolitical")
+        if normed is not None:
+            all_risks.append(normed)
+    if geo_risks_raw:
+        logger.info(
+            "RiskAnalysisGraph: supplier '%s' — injected %d geopolitical (active conflict) risks",
+            label, len(geo_risks_raw),
+        )
+
     all_opps: list[dict] = []
     for o in raw_opps:
         normed = _normalize_opportunity(o, default_source="news")
         if normed is not None:
             all_opps.append(normed)
 
-    dropped_risks = len(raw_risks) - len(all_risks)
+    dropped_risks = len(raw_risks) - (len(all_risks) - len(geo_risks_raw))
     dropped_opps = len(raw_opps) - len(all_opps)
     if dropped_risks or dropped_opps:
         logger.warning(

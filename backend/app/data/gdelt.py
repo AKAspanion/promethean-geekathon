@@ -7,13 +7,18 @@ import httpx
 logger = logging.getLogger(__name__)
 BASE_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 
-# Geopolitical keywords tuned for supply chain risk types
+# Geopolitical keywords tuned for supply chain risk types — conflict/war first
 _DEFAULT_KEYWORDS = [
+    "attack",
+    "armed conflict",
+    "military conflict",
     "supply chain disruption",
     "trade sanctions",
     "port strike",
     "factory shutdown",
     "natural disaster manufacturing",
+    "earthquake flood tsunami",
+    "embargo tariff trade attack",
 ]
 
 
@@ -69,30 +74,39 @@ class GDELTDataSource(BaseDataSource):
                         logger.warning("GDELT keyword %r error: %s", keyword, exc)
                         return []
 
-                # Fetch all keywords concurrently (cap at 5 to respect GDELT rate limits)
+                # Fetch all keywords concurrently (cap at 10 to respect GDELT rate limits)
                 all_articles = await asyncio.gather(
-                    *[_fetch_keyword(kw) for kw in keywords[:5]]
+                    *[_fetch_keyword(kw) for kw in keywords[:10]]
                 )
-                for articles in all_articles:
+                for keyword, articles in zip(keywords[:10], all_articles):
                     for article in articles:
                         title = (article.get("title") or "").strip()
                         if not title:
                             continue
+                        # Synthesize a description from metadata so downstream
+                        # LLM agents have useful context even without article body
+                        country = article.get("sourcecountry") or "Unknown region"
+                        domain = article.get("domain") or "unknown source"
+                        description = (
+                            f"{title}. Reported by {domain} ({country}), "
+                            f"matched on keyword \"{keyword}\"."
+                        )
                         results.append(
                             self._create_result(
                                 {
                                     "title": title,
-                                    "description": None,
+                                    "description": description,
                                     "url": article.get("url"),
-                                    "source": article.get("domain"),
+                                    "source": domain,
                                     "publishedAt": article.get("seendate"),
                                     "author": None,
                                     "content": None,
                                 },
                                 metadata={
-                                    "sourcecountry": article.get("sourcecountry"),
+                                    "sourcecountry": country,
                                     "language": article.get("language"),
                                     "source_provider": "gdelt",
+                                    "matched_keyword": keyword,
                                 },
                             )
                         )
