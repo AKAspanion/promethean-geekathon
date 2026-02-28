@@ -32,10 +32,7 @@ from app.services.agent_types import OemScope
 from app.data.manager import get_data_source_manager
 from app.agents.weather import run_weather_agent_graph
 from app.agents.news import run_news_agent_graph
-from app.agents.shipment import (
-    run_shipment_risk_graph,
-    shipping_risk_result_to_db_risks,
-)
+from app.agents.shipment import run_shipment_risk_graph
 from app.services.websocket_manager import (
     broadcast_agent_status,
     broadcast_suppliers_snapshot,
@@ -669,12 +666,11 @@ async def _run_analysis_for_oem(
     # Run Shipment Agent (LangGraph + LangChain) — it fetches tracking data itself.
     shipping_result = await run_shipment_risk_graph(scope)
     logger.info(
-        "_run_analysis_for_oem: shipping analysis score=%s for OEM %s",
-        shipping_result.get("shipping_risk_score"),
+        "_run_analysis_for_oem: shipping analysis risks=%d for OEM %s",
+        len(shipping_result.get("risks") or []),
         scope["oemName"],
     )
-    db_risks = shipping_risk_result_to_db_risks(shipping_result, scope)
-    for r in db_risks:
+    for r in shipping_result.get("risks") or []:
         r["oemId"] = oem_id
         if supplier_id_from_scope is not None:
             r["supplierId"] = supplier_id_from_scope

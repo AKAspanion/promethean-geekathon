@@ -34,6 +34,15 @@ type WeatherAgentProgressMessage = {
   details?: Record<string, unknown>;
 };
 
+type ShippingAgentProgressMessage = {
+  type: 'shipping_agent_progress';
+  step: string;
+  message: string;
+  oemName?: string;
+  supplierName?: string;
+  details?: Record<string, unknown>;
+};
+
 type OemRiskScoreMessage = {
   type: 'oem_risk_score';
   oemId: string;
@@ -45,6 +54,7 @@ type NotificationMessage =
   | SuppliersSnapshotMessage
   | NewsAgentProgressMessage
   | WeatherAgentProgressMessage
+  | ShippingAgentProgressMessage
   | OemRiskScoreMessage;
 
 const API_BASE_URL =
@@ -176,6 +186,39 @@ export function useWebSocketNotifications() {
                       opportunitiesIdentified:
                         prev.opportunitiesIdentified +
                         ((data.details.opportunities as number) || 0),
+                    }
+                  : {}),
+              };
+            },
+          );
+        }
+
+        if (data.type === 'shipping_agent_progress') {
+          console.log('[WS] shipping_agent_progress', {
+            step: data.step,
+            message: data.message,
+            supplierName: data.supplierName,
+            oemName: data.oemName,
+            details: data.details,
+          });
+          queryClient.setQueryData<AgentStatus | undefined>(
+            ['agent-status'],
+            (prev) => {
+              if (!prev) return prev;
+              const isCompleted = data.step === 'completed';
+              const label = data.supplierName
+                ? `[Shipping - ${data.supplierName}]`
+                : '[Shipping]';
+              return {
+                ...prev,
+                status: isCompleted ? 'completed' : 'analyzing',
+                currentTask: `${label} ${data.message}`,
+                lastUpdated: new Date().toISOString(),
+                ...(isCompleted && data.details
+                  ? {
+                      risksDetected:
+                        prev.risksDetected +
+                        ((data.details.risks as number) || 0),
                     }
                   : {}),
               };

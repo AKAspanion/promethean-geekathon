@@ -63,6 +63,7 @@ from app.models.risk import Risk, RiskStatus
 from app.models.supply_chain_risk_score import SupplyChainRiskScore
 from app.models.supplier_risk_analysis import SupplierRiskAnalysis
 from app.agents.news import run_news_agent_graph
+from app.agents.shipment import run_shipment_risk_graph
 from app.agents.weather import run_weather_graph
 from app.services.agent_types import OemScope
 from app.services.langchain_llm import get_chat_model
@@ -807,10 +808,11 @@ async def _process_next_supplier(
     )
     await _broadcast_status(db, agent_status_id, supplier_name=supplier_name, oem_name=oem_name)
 
-    supplier_result, global_result, weather_result = await asyncio.gather(
+    supplier_result, global_result, weather_result, shipping_result = await asyncio.gather(
         run_news_agent_graph({}, scope, context="supplier"),
         run_news_agent_graph({}, scope, context="global"),
         run_weather_graph(scope),
+        run_shipment_risk_graph(scope),
     )
 
     logger.info(
@@ -819,11 +821,17 @@ async def _process_next_supplier(
         len(weather_result.get("risks") or []),
         len(weather_result.get("opportunities") or []),
     )
+    logger.info(
+        "RiskAnalysisGraph: supplier '%s' — shipment agent returned risks=%d",
+        label,
+        len(shipping_result.get("risks") or []),
+    )
 
     raw_risks = (
         (supplier_result.get("risks") or [])
         + (global_result.get("risks") or [])
         + (weather_result.get("risks") or [])
+        + (shipping_result.get("risks") or [])
     )
     raw_opps = (
         (supplier_result.get("opportunities") or [])

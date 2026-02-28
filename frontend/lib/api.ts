@@ -403,7 +403,10 @@ export interface TrackingActivity {
   date?: string;
   activity?: string;
   location?: string;
-  daysWithoutMovement?: number;
+  sequence?: number;
+  planned_arrival?: string;
+  actual_arrival?: string;
+  transport_mode?: string;
   [key: string]: unknown;
 }
 
@@ -420,10 +423,8 @@ export const shippingRiskApi = {
       .post<ShippingRiskResult>(`/shipping/shipping-risk/${supplierId}`)
       .then((res) => res.data),
 
-  // Fetches tracking records from the mock server and flattens nested events.
-  // Handles two shapes:
-  //   Nested: { supplier_id, tracking_data: { shipment_track_activities: [...events] } }
-  //   Flat:   { supplier_id, status, date, location, activity, ... }
+  // Fetches tracking records from the mock server and converts route_plan
+  // checkpoints into timeline entries for the dashboard.
   getTracking: (supplierId: string): Promise<TrackingActivity[]> =>
     fetch(
       `${MOCK_SERVER_URL}/mock/shipment-tracking?q=supplier_id:${encodeURIComponent(supplierId)}`,
@@ -438,20 +439,44 @@ export const shippingRiskApi = {
         for (const item of items) {
           const data = item.data ?? {};
           const td = data.tracking_data as Record<string, unknown> | undefined;
-          const events = Array.isArray(td?.shipment_track_activities)
-            ? (td!.shipment_track_activities as Record<string, unknown>[])
+          const routePlan = Array.isArray(td?.route_plan)
+            ? (td!.route_plan as Record<string, unknown>[])
             : null;
+          const meta = (td?.shipment_meta ?? {}) as Record<string, unknown>;
 
-          if (events && events.length > 0) {
-            // Nested structure — emit one timeline entry per event
-            for (const ev of events) {
+          if (routePlan && routePlan.length > 0) {
+            // Sort checkpoints by sequence
+            const sorted = [...routePlan].sort(
+              (a, b) =>
+                ((a.sequence as number) ?? 0) - ((b.sequence as number) ?? 0),
+            );
+
+            for (const cp of sorted) {
+              const loc = cp.location as
+                | Record<string, unknown>
+                | undefined;
+              const city = loc?.city ?? "";
+              const country = loc?.country ?? "";
+              const locationStr = [city, country]
+                .filter(Boolean)
+                .join(", ");
+
               out.push({
-                supplier_id: data.supplier_id,
-                status: ev.status,
-                activity: ev.activity,
-                location: ev.location,
-                date: ev.date,
-              } as TrackingActivity);
+                supplier_name: data.supplier_name as string | undefined,
+                status: cp.status as string | undefined,
+                activity: cp.transport_mode as string | undefined,
+                location: locationStr || undefined,
+                date:
+                  (cp.actual_arrival as string) ??
+                  (cp.planned_arrival as string) ??
+                  undefined,
+                sequence: cp.sequence as number | undefined,
+                planned_arrival: cp.planned_arrival as string | undefined,
+                actual_arrival: cp.actual_arrival as string | undefined,
+                transport_mode: cp.transport_mode as string | undefined,
+                awb_code: meta.awb_code as string | undefined,
+                current_status: meta.current_status as string | undefined,
+              });
             }
           } else {
             // Flat structure — use the record directly, skip nested objects

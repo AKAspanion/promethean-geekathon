@@ -31,22 +31,29 @@ function scoreLabel(
 function trackingDotClass(status?: string): string {
   const s = (status || "").toLowerCase();
   if (s.includes("delay") || s.includes("exception")) return "bg-red-500";
-  if (s.includes("delivered") || s.includes("complete")) return "bg-green-500";
-  if (s.includes("transit") || s.includes("dispatch") || s.includes("shipped"))
+  if (s.includes("delivered") || s.includes("completed") || s.includes("complete"))
+    return "bg-green-500";
+  if (s.includes("current") || s.includes("transit") || s.includes("dispatch") || s.includes("shipped"))
     return "bg-primary-light";
+  if (s.includes("upcoming")) return "bg-medium-gray";
   return "bg-medium-gray";
 }
 
 // Render any extra fields from a tracking record that aren't the standard display fields
 const STANDARD_FIELDS = new Set([
   "supplier_id",
+  "supplier_name",
   "status",
   "activity",
   "date",
   "location",
-  "daysWithoutMovement",
-  "supplier_name",
+  "sequence",
+  "planned_arrival",
+  "actual_arrival",
+  "transport_mode",
   "awb_code",
+  "current_status",
+  "daysWithoutMovement",
 ]);
 
 function ExtraFields({ record }: { record: TrackingActivity }) {
@@ -328,54 +335,87 @@ export function ShippingRiskDashboard() {
             </p>
           ) : (
             <ol className="relative border-l-2 border-light-gray dark:border-gray-600 pl-6">
-              {timeline.map((act, i) => (
-                <li key={i} className="mb-6 last:mb-0">
-                  {/* dot on the line */}
-                  <span
-                    className={`absolute -left-[9px] mt-1 flex h-4 w-4 items-center justify-center rounded-full ring-2 ring-white dark:ring-gray-800 ${trackingDotClass(act.status)}`}
-                  />
+              {timeline.map((act, i) => {
+                const statusLower = (act.status || "").toLowerCase();
+                const isDelayed =
+                  statusLower.includes("delay") ||
+                  statusLower.includes("exception");
+                const isCompleted =
+                  statusLower.includes("completed") ||
+                  statusLower.includes("delivered");
 
-                  <div className="rounded-xl border border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-700/50 p-3">
-                    {/* Status + activity */}
-                    <div className="flex flex-wrap items-center gap-2">
-                      {act.status && (
-                        <span
-                          className={`rounded-full border px-2 py-0.5 text-xs font-medium ${riskLevelClass(
-                            act.status.toLowerCase().includes("delay") ||
-                              act.status.toLowerCase().includes("exception")
-                              ? "high"
-                              : act.status.toLowerCase().includes("delivered")
-                                ? "low"
-                                : "medium",
-                          )}`}
-                        >
-                          {act.status}
-                        </span>
-                      )}
-                      {act.activity && (
-                        <span className="text-sm text-dark-gray dark:text-gray-200">
-                          {act.activity}
-                        </span>
-                      )}
-                    </div>
+                return (
+                  <li key={i} className="mb-6 last:mb-0">
+                    {/* dot on the line */}
+                    <span
+                      className={`absolute -left-[9px] mt-1 flex h-4 w-4 items-center justify-center rounded-full ring-2 ring-white dark:ring-gray-800 ${trackingDotClass(act.status)}`}
+                    />
 
-                    {/* Location + date */}
-                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-medium-gray dark:text-gray-400">
-                      {act.location && <span>📍 {act.location}</span>}
-                      {act.date && <span>🕐 {act.date}</span>}
-                      {act.daysWithoutMovement != null &&
-                        Number(act.daysWithoutMovement) > 0 && (
-                          <span className="text-amber-600 dark:text-amber-400">
-                            ⚠ {act.daysWithoutMovement}d without movement
+                    <div className="rounded-xl border border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-700/50 p-3">
+                      {/* Status + transport mode */}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {act.status && (
+                          <span
+                            className={`rounded-full border px-2 py-0.5 text-xs font-medium ${riskLevelClass(
+                              isDelayed
+                                ? "high"
+                                : isCompleted
+                                  ? "low"
+                                  : "medium",
+                            )}`}
+                          >
+                            {act.status}
                           </span>
                         )}
-                    </div>
+                        {act.transport_mode && (
+                          <span className="rounded-lg border border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-700 px-2 py-0.5 text-xs text-medium-gray dark:text-gray-400">
+                            {act.transport_mode}
+                          </span>
+                        )}
+                        {act.sequence != null && (
+                          <span className="text-xs text-medium-gray dark:text-gray-400">
+                            #{act.sequence}
+                          </span>
+                        )}
+                      </div>
 
-                    {/* Any extra fields stored in the record */}
-                    <ExtraFields record={act} />
-                  </div>
-                </li>
-              ))}
+                      {/* Location + dates */}
+                      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-medium-gray dark:text-gray-400">
+                        {act.location && <span>📍 {act.location}</span>}
+                        {act.actual_arrival && (
+                          <span>
+                            🕐 Arrived:{" "}
+                            {new Date(act.actual_arrival).toLocaleDateString()}
+                          </span>
+                        )}
+                        {act.planned_arrival && (
+                          <span>
+                            📅 Planned:{" "}
+                            {new Date(act.planned_arrival).toLocaleDateString()}
+                          </span>
+                        )}
+                        {act.actual_arrival &&
+                          act.planned_arrival &&
+                          new Date(act.actual_arrival) >
+                            new Date(act.planned_arrival) && (
+                            <span className="text-amber-600 dark:text-amber-400">
+                              ⚠ Arrived{" "}
+                              {Math.ceil(
+                                (new Date(act.actual_arrival).getTime() -
+                                  new Date(act.planned_arrival).getTime()) /
+                                  (1000 * 60 * 60 * 24),
+                              )}
+                              d late
+                            </span>
+                          )}
+                      </div>
+
+                      {/* Any extra fields stored in the record */}
+                      <ExtraFields record={act} />
+                    </div>
+                  </li>
+                );
+              })}
             </ol>
           )}
         </div>
