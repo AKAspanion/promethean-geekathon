@@ -141,6 +141,145 @@ def supplier_metrics(
     }
 
 
+@router.get("/{id}/analysis-report/{sra_id}")
+def supplier_analysis_report(
+    id: UUID,
+    sra_id: UUID,
+    db: Session = Depends(get_db),
+    oem: Oem = Depends(get_current_oem),
+):
+    """Full analysis report for a specific SupplierRiskAnalysis run.
+
+    Returns the risk analysis, swarm analysis, per-agent raw states,
+    risks, opportunities, and mitigation plans — everything needed to
+    render a detailed historical analysis report.
+    """
+    from app.models.supplier_risk_analysis import SupplierRiskAnalysis
+    from app.models.swarm_analysis import SwarmAnalysis
+    from app.models.agent_run_data import AgentRunData
+    from app.models.risk import Risk
+    from app.models.opportunity import Opportunity
+    from app.models.mitigation_plan import MitigationPlan
+    from app.models.workflow_run import WorkflowRun
+    from app.services.suppliers import (
+        _serialize_risk,
+        _serialize_opportunity,
+        _serialize_mitigation_plan,
+    )
+
+    supplier = get_one(db, id, oem.id)
+    if not supplier:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+
+    sra = (
+        db.query(SupplierRiskAnalysis)
+        .filter(
+            SupplierRiskAnalysis.id == sra_id,
+            SupplierRiskAnalysis.supplierId == id,
+            SupplierRiskAnalysis.oemId == oem.id,
+        )
+        .first()
+    )
+    if not sra:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+
+    wf_run_id = sra.workflowRunId
+    wf_run = db.query(WorkflowRun).filter(WorkflowRun.id == wf_run_id).first()
+
+    # Swarm analysis
+    swarm = (
+        db.query(SwarmAnalysis)
+        .filter(SwarmAnalysis.supplierRiskAnalysisId == sra.id)
+        .first()
+    )
+
+    # Agent run data
+    agent_rows = (
+        db.query(AgentRunData)
+        .filter(
+            AgentRunData.supplierId == id,
+            AgentRunData.workflowRunId == wf_run_id,
+        )
+        .all()
+    )
+    agent_states = {row.agentType: row.finalState for row in agent_rows}
+
+    # Risks
+    risks = (
+        db.query(Risk)
+        .filter(Risk.workflowRunId == wf_run_id, Risk.supplierId == id)
+        .order_by(Risk.createdAt.desc())
+        .all()
+    )
+
+    # Opportunities
+    opportunities = (
+        db.query(Opportunity)
+        .filter(Opportunity.workflowRunId == wf_run_id, Opportunity.supplierId == id)
+        .order_by(Opportunity.createdAt.desc())
+        .all()
+    )
+
+    # Severity counts
+    severity_counts = {}
+    for r in risks:
+        sev = str(getattr(r.severity, "value", r.severity))
+        severity_counts[sev] = severity_counts.get(sev, 0) + 1
+
+    # Mitigation plans
+    risk_ids = [r.id for r in risks]
+    mitigation_plans = []
+    if risk_ids:
+        mitigation_plans = (
+            db.query(MitigationPlan)
+            .filter(MitigationPlan.riskId.in_(risk_ids))
+            .order_by(MitigationPlan.createdAt.desc())
+            .all()
+        )
+
+    return {
+        "supplier": {
+            "id": str(supplier.id),
+            "name": supplier.name,
+            "location": supplier.location,
+            "city": supplier.city,
+            "country": supplier.country,
+            "region": supplier.region,
+            "commodities": supplier.commodities,
+        },
+        "workflowRun": {
+            "id": str(wf_run.id) if wf_run else str(wf_run_id),
+            "runDate": wf_run.runDate.isoformat() if wf_run and wf_run.runDate else None,
+            "runIndex": wf_run.runIndex if wf_run else None,
+            "createdAt": wf_run.createdAt.isoformat() if wf_run and wf_run.createdAt else None,
+        },
+        "riskAnalysis": {
+            "id": str(sra.id),
+            "riskScore": float(sra.riskScore) if sra.riskScore is not None else 0,
+            "description": sra.description,
+            "metadata": sra.metadata_,
+            "createdAt": sra.createdAt.isoformat() if sra.createdAt else None,
+        },
+        "swarmAnalysis": {
+            "id": str(swarm.id),
+            "finalScore": float(swarm.finalScore) if swarm.finalScore is not None else 0,
+            "riskLevel": swarm.riskLevel,
+            "topDrivers": swarm.topDrivers or [],
+            "mitigationPlan": swarm.mitigationPlan or [],
+            "agents": swarm.agents or [],
+            "createdAt": swarm.createdAt.isoformat() if swarm.createdAt else None,
+        } if swarm else None,
+        "agentStates": agent_states,
+        "risks": [_serialize_risk(r) for r in risks],
+        "risksSummary": {
+            "total": len(risks),
+            "bySeverity": severity_counts,
+        },
+        "opportunities": [_serialize_opportunity(o) for o in opportunities],
+        "mitigationPlans": [_serialize_mitigation_plan(mp) for mp in mitigation_plans],
+    }
+
+
 @router.get("/{id}")
 def get_supplier_by_id(
     id: UUID,

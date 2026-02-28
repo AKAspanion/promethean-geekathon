@@ -614,7 +614,12 @@ async def run_shipment_risk_graph(
     }
     final_state = await SHIPMENT_RISK_GRAPH.ainvoke(initial_state)
     risk_result = final_state.get("shipping_risk_result") or dict(_FALLBACK_RESULT)
-    return {"risks": shipping_risk_result_to_db_risks(risk_result, scope)}
+    return {
+        "risks": shipping_risk_result_to_db_risks(risk_result, scope),
+        "tracking_records": final_state.get("tracking_records") or [],
+        "supplier_data": final_state.get("supplier_data") or {},
+        "shipping_risk_result": risk_result,
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -764,4 +764,10 @@ async def run_news_agent_graph(
         oem_name=oem_label, supplier_name=sup_label,
     )
 
-    return {"risks": risks_for_db, "opportunities": opps_for_db}
+    return {
+        "risks": risks_for_db,
+        "opportunities": opps_for_db,
+        "newsapi_raw": final_state.get("newsapi_raw") or [],
+        "gdelt_raw": final_state.get("gdelt_raw") or [],
+        "news_items": [dict(item) for item in (final_state.get("news_items") or [])],
+    }

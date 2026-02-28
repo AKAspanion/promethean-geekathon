@@ -14,6 +14,7 @@ from app.models.shipment import Shipment
 from app.models.shipping_risk_assessment import ShippingRiskAssessment
 from app.models.trend_insight import TrendInsight
 from app.models.swarm_analysis import SwarmAnalysis
+from app.models.agent_run_data import AgentRunData
 
 __all__ = [
     "Oem",
@@ -38,4 +39,5 @@ __all__ = [
     "ShippingRiskAssessment",
     "TrendInsight",
     "SwarmAnalysis",
+    "AgentRunData",
 ]

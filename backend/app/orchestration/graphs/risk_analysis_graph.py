@@ -827,6 +827,25 @@ async def _process_next_supplier(
         len(shipping_result.get("risks") or []),
     )
 
+    # -- 1a. Persist full agent states for later retrieval ---------------------
+    from app.models.agent_run_data import AgentRunData
+
+    if supplier_id_uuid:
+        for agent_type, agent_result in [
+            ("weather", weather_result),
+            ("news_supplier", supplier_result),
+            ("news_global", global_result),
+            ("shipping", shipping_result),
+        ]:
+            db.add(AgentRunData(
+                oemId=oem_id,
+                supplierId=supplier_id_uuid,
+                workflowRunId=workflow_run_id,
+                agentType=agent_type,
+                finalState=agent_result,
+            ))
+        db.commit()
+
     raw_risks = (
         (supplier_result.get("risks") or [])
         + (global_result.get("risks") or [])

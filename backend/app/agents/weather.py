@@ -1365,7 +1365,16 @@ async def run_weather_graph(
         oem_name=oem_resolved, supplier_name=supplier_resolved,
     )
 
-    return {"risks": risks, "opportunities": opps, "daily_timeline": daily_timeline}
+    return {
+        "risks": risks,
+        "opportunities": opps,
+        "daily_timeline": daily_timeline,
+        "exposure_payload": final_state.get("exposure_payload"),
+        "supplier_city": final_state.get("supplier_city"),
+        "oem_city": final_state.get("oem_city"),
+        "route_plan": final_state.get("route_plan"),
+        "agent_summary": final_state.get("agent_summary"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1652,4 +1661,8 @@ async def run_weather_agent_graph(
             "sourceData": None,
         })
 
-    return {"risks": risks_for_db, "opportunities": opps_for_db}
+    return {
+        "risks": risks_for_db,
+        "opportunities": opps_for_db,
+        "weather_items": final_state.get("weather_items") or [],
+    }
