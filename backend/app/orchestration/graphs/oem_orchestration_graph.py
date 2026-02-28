@@ -449,8 +449,15 @@ async def _aggregate_oem_score(
     config: RunnableConfig,
 ) -> OemOrchestrationState:
     """
-    Query all detected risks for this OEM across all supplier runs, compute a
-    single ``SupplyChainRiskScore`` row, and derive the OEM-level risk band.
+    Derive the OEM-level risk score by aggregating **per-supplier scores**
+    rather than re-pooling every individual risk through the exponential curve
+    (which inflates the OEM score far above the individual supplier scores).
+
+    Formula:
+        oem_score = 0.6 * mean(supplier_scores) + 0.4 * max(supplier_scores)
+
+    This ensures the OEM score stays proportional to its suppliers while still
+    being pulled toward the worst-performing supplier (risk-averse).
     """
     db: Session = config["configurable"]["db"]
     oem_id = UUID(state["oem_id"])
@@ -479,7 +486,8 @@ async def _aggregate_oem_score(
         .all()
     )
 
-    # Convert ORM objects to the dict shape expected by compute_score_from_dicts.
+    # Still compute breakdown & severity_counts from pooled risks for
+    # informational purposes (stored in the SupplyChainRiskScore row).
     risk_dicts = [
         {
             "severity": getattr(r.severity, "value", r.severity),
@@ -488,7 +496,22 @@ async def _aggregate_oem_score(
         }
         for r in all_risks_orm
     ]
-    overall, breakdown, severity_counts = compute_score_from_dicts(risk_dicts)
+    _, breakdown, severity_counts = compute_score_from_dicts(risk_dicts)
+
+    # ── OEM score = weighted blend of per-supplier scores ─────────────────
+    supplier_results = state.get("supplier_results") or []
+    supplier_scores = [
+        sr.get("unified_score") or 0.0 for sr in supplier_results
+    ]
+
+    if supplier_scores:
+        avg_score = sum(supplier_scores) / len(supplier_scores)
+        max_score = max(supplier_scores)
+        # Blend: 60% average + 40% worst-case supplier
+        overall = round(0.6 * avg_score + 0.4 * max_score, 2)
+    else:
+        overall = 0.0
+
     oem_risk_level = score_to_level(overall)
 
     # Use the first workflow_run_id as the canonical OEM-level run reference.
@@ -507,8 +530,11 @@ async def _aggregate_oem_score(
     db.commit()
 
     logger.info(
-        "OemOrchestrationGraph: OEM %s — overall_score=%.2f level=%s risks=%d",
-        state["oem_id"], overall, oem_risk_level, len(all_risks_orm),
+        "OemOrchestrationGraph: OEM %s — overall_score=%.2f level=%s "
+        "supplier_scores=%s risks=%d",
+        state["oem_id"], overall, oem_risk_level,
+        [round(s, 2) for s in supplier_scores],
+        len(all_risks_orm),
     )
 
     return {"oem_risk_score": overall, "oem_risk_level": oem_risk_level}
