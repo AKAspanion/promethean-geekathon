@@ -12,7 +12,7 @@ import {
 } from "@/lib/api";
 import { useTheme } from "@/lib/theme-context";
 
-function riskLevelClass(level: string): string {
+export function riskLevelClass(level: string): string {
   const l = (level || "").toLowerCase();
   if (l === "low")
     return "border-cyan-blue/60 bg-cyan-blue/10 text-primary-dark dark:text-primary-light";
@@ -28,12 +28,21 @@ function scoreLabel(risk: RiskDimension | null | undefined): string {
   return `${risk.score} (${risk.label})`;
 }
 
-function trackingDotClass(status?: string): string {
+export function trackingDotClass(status?: string): string {
   const s = (status || "").toLowerCase();
   if (s.includes("delay") || s.includes("exception")) return "bg-red-500";
-  if (s.includes("delivered") || s.includes("completed") || s.includes("complete"))
+  if (
+    s.includes("delivered") ||
+    s.includes("completed") ||
+    s.includes("complete")
+  )
     return "bg-green-500";
-  if (s.includes("current") || s.includes("transit") || s.includes("dispatch") || s.includes("shipped"))
+  if (
+    s.includes("current") ||
+    s.includes("transit") ||
+    s.includes("dispatch") ||
+    s.includes("shipped")
+  )
     return "bg-primary-light";
   if (s.includes("upcoming")) return "bg-medium-gray";
   return "bg-medium-gray";
@@ -72,6 +81,231 @@ function ExtraFields({ record }: { record: TrackingActivity }) {
     </div>
   );
 }
+
+// ─── Reusable presentational components ─────────────────────────────────────
+
+/**
+ * Risk score gauge + dimension breakdown + risk factors / recommended actions.
+ * Renders the shipping risk result without any fetching logic.
+ */
+export function ShippingRiskOverview({
+  result,
+}: {
+  result: ShippingRiskResult;
+}) {
+  const { theme } = useTheme();
+  const scoreToDeg = (score: number) => Math.max(0, Math.min(1, score)) * 360;
+
+  return (
+    <div className="space-y-5">
+      {/* Score gauge + level badge */}
+      <div className="flex flex-wrap items-center gap-4">
+        <div
+          className="flex h-20 w-20 shrink-0 items-center justify-center rounded-full border-4 border-primary-dark dark:border-primary-light"
+          style={{
+            background: `conic-gradient(#4A90E2 0deg, #4A90E2 ${scoreToDeg(result.shipping_risk_score)}deg, ${theme === "dark" ? "#1f2937" : "#f9fafb"} ${scoreToDeg(result.shipping_risk_score)}deg)`,
+          }}
+        >
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white dark:bg-gray-800">
+            <div className="text-center">
+              <span className="block text-lg font-semibold text-dark-gray dark:text-gray-200">
+                {(result.shipping_risk_score * 100).toFixed(0)}%
+              </span>
+              <span className="text-[10px] text-medium-gray dark:text-gray-400">
+                risk
+              </span>
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <span
+            className={`inline-flex w-fit rounded-full border px-2 py-0.5 text-xs ${riskLevelClass(result.risk_level)}`}
+          >
+            Risk level: {result.risk_level || "Medium"}
+          </span>
+        </div>
+      </div>
+
+      {/* Risk dimension breakdown */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {(
+          [
+            { label: "Delay", data: result.delay_risk },
+            { label: "Stagnation", data: result.stagnation_risk },
+            { label: "Velocity", data: result.velocity_risk },
+          ] as { label: string; data: RiskDimension | null | undefined }[]
+        ).map(({ label, data }) => (
+          <div
+            key={label}
+            className={`rounded-xl border p-3 ${riskLevelClass(data?.label || "")}`}
+          >
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-semibold uppercase tracking-wider">
+                {label}
+              </span>
+              <span className="text-sm font-bold">
+                {data ? data.score : "—"}
+              </span>
+            </div>
+            {data?.reason && (
+              <p className="text-xs leading-relaxed opacity-90">
+                {data.reason}
+              </p>
+            )}
+            {!data?.reason && (
+              <p className="text-xs opacity-60">{scoreLabel(data)}</p>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Risk factors + Recommended actions */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        {result.risk_factors?.length > 0 && (
+          <div>
+            <strong className="mb-2 block text-xs uppercase tracking-wider text-medium-gray dark:text-gray-400">
+              Risk factors
+            </strong>
+            <ul className="list-inside list-disc space-y-1 text-sm text-dark-gray dark:text-gray-300">
+              {result.risk_factors.map((f, i) => (
+                <li key={i}>{f}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {result.recommended_actions?.length > 0 && (
+          <div>
+            <strong className="mb-2 block text-xs uppercase tracking-wider text-medium-gray dark:text-gray-400">
+              Recommended actions
+            </strong>
+            <ul className="list-inside list-disc space-y-1 text-sm text-dark-gray dark:text-gray-300">
+              {result.recommended_actions.map((a, i) => (
+                <li key={i}>{a}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Vertical tracking timeline. Works with TrackingActivity[] records.
+ */
+export function TrackingTimelineView({
+  timeline,
+}: {
+  timeline: TrackingActivity[];
+}) {
+  if (timeline.length === 0) return null;
+
+  return (
+    <div>
+      <div className="mb-3 flex items-center gap-2">
+        <strong className="text-xs uppercase tracking-wider text-medium-gray dark:text-gray-400">
+          Tracking Timeline
+        </strong>
+        <span className="ml-auto rounded-full bg-primary-dark/10 px-2 py-0.5 text-xs text-primary-dark dark:text-primary-light">
+          {timeline.length} checkpoint{timeline.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+      <ol className="relative border-l-2 border-light-gray dark:border-gray-600 pl-6">
+        {timeline.map((act, i) => {
+          const statusLower = (act.status || "").toLowerCase();
+          const isDelayed =
+            statusLower.includes("delay") || statusLower.includes("exception");
+          const isCompleted =
+            statusLower.includes("completed") ||
+            statusLower.includes("delivered") ||
+            statusLower.includes("complete");
+          const isCurrent = statusLower.includes("current");
+
+          return (
+            <li key={i} className="mb-6 last:mb-0">
+              <span
+                className={`absolute -left-2.25 mt-1 flex h-4 w-4 items-center justify-center rounded-full ring-2 ring-white dark:ring-gray-800 ${trackingDotClass(act.status)}`}
+              />
+              <div
+                className={`rounded-xl border p-3 ${
+                  isCurrent
+                    ? "border-primary-light/50 bg-sky-blue/20 dark:bg-primary-dark/20"
+                    : "border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-700/50"
+                }`}
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  {act.status && (
+                    <span
+                      className={`rounded-full border px-2 py-0.5 text-xs font-medium ${riskLevelClass(
+                        isDelayed
+                          ? "high"
+                          : isCompleted
+                            ? "low"
+                            : isCurrent
+                              ? "medium"
+                              : "",
+                      )}`}
+                    >
+                      {act.status}
+                    </span>
+                  )}
+                  {act.transport_mode && (
+                    <span className="rounded-lg border border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-700 px-2 py-0.5 text-xs text-medium-gray dark:text-gray-400">
+                      {act.transport_mode}
+                    </span>
+                  )}
+                  {act.sequence != null && (
+                    <span className="text-xs text-medium-gray dark:text-gray-400">
+                      #{act.sequence}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-medium-gray dark:text-gray-400">
+                  {act.location && <span>📍 {act.location}</span>}
+                  {act.actual_arrival && (
+                    <span>
+                      🕐 Arrived:{" "}
+                      {new Date(act.actual_arrival).toLocaleDateString()}
+                    </span>
+                  )}
+                  {act.departure_time && (
+                    <span>
+                      🚀 Departed:{" "}
+                      {new Date(act.departure_time).toLocaleDateString()}
+                    </span>
+                  )}
+                  {act.planned_arrival && (
+                    <span>
+                      📅 Planned:{" "}
+                      {new Date(act.planned_arrival).toLocaleDateString()}
+                    </span>
+                  )}
+                  {act.actual_arrival &&
+                    act.planned_arrival &&
+                    new Date(act.actual_arrival) >
+                      new Date(act.planned_arrival) && (
+                      <span className="text-amber-600 dark:text-amber-400">
+                        ⚠ Arrived{" "}
+                        {Math.ceil(
+                          (new Date(act.actual_arrival).getTime() -
+                            new Date(act.planned_arrival).getTime()) /
+                            (1000 * 60 * 60 * 24),
+                        )}
+                        d late
+                      </span>
+                    )}
+                </div>
+                <ExtraFields record={act} />
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+// ─── Full page dashboard ────────────────────────────────────────────────────
 
 export function ShippingRiskDashboard() {
   const { theme } = useTheme();
@@ -284,11 +518,13 @@ export function ShippingRiskDashboard() {
             <p className="mt-0.5 text-base font-semibold text-dark-gray dark:text-gray-200">
               {resultSupplierName || trackingLabel}
             </p>
-            {resultSupplierName && trackingLabel && resultSupplierName !== trackingLabel && (
-              <p className="mt-1 text-xs text-medium-gray dark:text-gray-400">
-                Risk result: {resultSupplierName} · Tracking: {trackingLabel}
-              </p>
-            )}
+            {resultSupplierName &&
+              trackingLabel &&
+              resultSupplierName !== trackingLabel && (
+                <p className="mt-1 text-xs text-medium-gray dark:text-gray-400">
+                  Risk result: {resultSupplierName} · Tracking: {trackingLabel}
+                </p>
+              )}
           </div>
         )}
 
@@ -324,37 +560,35 @@ export function ShippingRiskDashboard() {
 
             {/* Risk dimension breakdown with reasons */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              {([
-                { label: "Delay", data: result.delay_risk },
-                { label: "Stagnation", data: result.stagnation_risk },
-                { label: "Velocity", data: result.velocity_risk },
-              ] as { label: string; data: RiskDimension | null | undefined }[]).map(
-                ({ label, data }) => (
-                  <div
-                    key={label}
-                    className={`rounded-xl border p-3 ${riskLevelClass(data?.label || "")}`}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-semibold uppercase tracking-wider">
-                        {label}
-                      </span>
-                      <span className="text-sm font-bold">
-                        {data ? data.score : "—"}
-                      </span>
-                    </div>
-                    {data?.reason && (
-                      <p className="text-xs leading-relaxed opacity-90">
-                        {data.reason}
-                      </p>
-                    )}
-                    {!data?.reason && (
-                      <p className="text-xs opacity-60">
-                        {scoreLabel(data)}
-                      </p>
-                    )}
+              {(
+                [
+                  { label: "Delay", data: result.delay_risk },
+                  { label: "Stagnation", data: result.stagnation_risk },
+                  { label: "Velocity", data: result.velocity_risk },
+                ] as { label: string; data: RiskDimension | null | undefined }[]
+              ).map(({ label, data }) => (
+                <div
+                  key={label}
+                  className={`rounded-xl border p-3 ${riskLevelClass(data?.label || "")}`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-semibold uppercase tracking-wider">
+                      {label}
+                    </span>
+                    <span className="text-sm font-bold">
+                      {data ? data.score : "—"}
+                    </span>
                   </div>
-                ),
-              )}
+                  {data?.reason && (
+                    <p className="text-xs leading-relaxed opacity-90">
+                      {data.reason}
+                    </p>
+                  )}
+                  {!data?.reason && (
+                    <p className="text-xs opacity-60">{scoreLabel(data)}</p>
+                  )}
+                </div>
+              ))}
             </div>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -406,23 +640,32 @@ export function ShippingRiskDashboard() {
 
             <div className="mb-3 flex items-center gap-2 text-sm text-dark-gray dark:text-gray-200">
               <span className="font-medium">
-                {[shipmentMeta.origin_city, shipmentMeta.origin_country].filter(Boolean).join(", ") || "—"}
+                {[shipmentMeta.origin_city, shipmentMeta.origin_country]
+                  .filter(Boolean)
+                  .join(", ") || "—"}
               </span>
               <span className="text-medium-gray dark:text-gray-400">→</span>
               <span className="font-medium">
-                {[shipmentMeta.destination_city, shipmentMeta.destination_country].filter(Boolean).join(", ") || "—"}
+                {[
+                  shipmentMeta.destination_city,
+                  shipmentMeta.destination_country,
+                ]
+                  .filter(Boolean)
+                  .join(", ") || "—"}
               </span>
             </div>
 
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-medium-gray dark:text-gray-400">
               {shipmentMeta.awb_code && (
                 <span>
-                  <span className="font-medium">AWB:</span> {shipmentMeta.awb_code}
+                  <span className="font-medium">AWB:</span>{" "}
+                  {shipmentMeta.awb_code}
                 </span>
               )}
               {shipmentMeta.shipment_id != null && (
                 <span>
-                  <span className="font-medium">Shipment ID:</span> {shipmentMeta.shipment_id}
+                  <span className="font-medium">Shipment ID:</span>{" "}
+                  {shipmentMeta.shipment_id}
                 </span>
               )}
               {shipmentMeta.pickup_date && (
@@ -439,12 +682,15 @@ export function ShippingRiskDashboard() {
               )}
               {shipmentMeta.transit_days_estimated != null && (
                 <span>
-                  <span className="font-medium">Transit:</span> {shipmentMeta.transit_days_estimated} days
+                  <span className="font-medium">Transit:</span>{" "}
+                  {shipmentMeta.transit_days_estimated} days
                 </span>
               )}
               {shipmentMeta.current_checkpoint_sequence != null && (
                 <span>
-                  <span className="font-medium">Checkpoint:</span> {shipmentMeta.current_checkpoint_sequence} of {timeline.length}
+                  <span className="font-medium">Checkpoint:</span>{" "}
+                  {shipmentMeta.current_checkpoint_sequence} of{" "}
+                  {timeline.length}
                 </span>
               )}
             </div>
@@ -472,7 +718,9 @@ export function ShippingRiskDashboard() {
           {loadingTracking ? (
             <div className="flex items-center gap-2 rounded-lg border border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-700/50 p-4">
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary-dark dark:border-primary-light border-t-transparent" />
-              <span className="text-sm text-medium-gray dark:text-gray-400">Loading tracking data...</span>
+              <span className="text-sm text-medium-gray dark:text-gray-400">
+                Loading tracking data...
+              </span>
             </div>
           ) : timeline.length === 0 ? (
             <p className="rounded-lg border border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-700/50 p-4 text-sm text-medium-gray dark:text-gray-400">
@@ -497,14 +745,16 @@ export function ShippingRiskDashboard() {
                   <li key={i} className="mb-6 last:mb-0">
                     {/* dot on the line */}
                     <span
-                      className={`absolute -left-[9px] mt-1 flex h-4 w-4 items-center justify-center rounded-full ring-2 ring-white dark:ring-gray-800 ${trackingDotClass(act.status)}`}
+                      className={`absolute -left-2.25 mt-1 flex h-4 w-4 items-center justify-center rounded-full ring-2 ring-white dark:ring-gray-800 ${trackingDotClass(act.status)}`}
                     />
 
-                    <div className={`rounded-xl border p-3 ${
-                      isCurrent
-                        ? "border-primary-light/50 bg-sky-blue/20 dark:bg-primary-dark/20"
-                        : "border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-700/50"
-                    }`}>
+                    <div
+                      className={`rounded-xl border p-3 ${
+                        isCurrent
+                          ? "border-primary-light/50 bg-sky-blue/20 dark:bg-primary-dark/20"
+                          : "border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-700/50"
+                      }`}
+                    >
                       {/* Status + transport mode */}
                       <div className="flex flex-wrap items-center gap-2">
                         {act.status && (

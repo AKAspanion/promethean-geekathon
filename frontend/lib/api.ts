@@ -472,6 +472,27 @@ export interface RiskHistoryEntry {
   } | null;
 }
 
+// Analysis Report — full historical analysis for a specific run
+export interface AnalysisReport {
+  supplier: {
+    id: string;
+    name: string;
+    location?: string | null;
+    city?: string | null;
+    country?: string | null;
+    region?: string | null;
+    commodities?: string | null;
+  };
+  workflowRun: WorkflowRunInfo | null;
+  riskAnalysis: RiskAnalysisInfo | null;
+  swarmAnalysis: MetricsSwarmAnalysis | null;
+  risks: MetricsRisk[];
+  risksSummary: { total: number; bySeverity: Record<string, number> };
+  opportunities: MetricsOpportunity[];
+  mitigationPlans: MetricsMitigationPlan[];
+  agentStates: Record<string, unknown>;
+}
+
 export const suppliersApi = {
   uploadCsv: (file: File) => {
     const formData = new FormData();
@@ -502,6 +523,12 @@ export const suppliersApi = {
   update: (id: string, data: SupplierUpdatePayload) =>
     api.put<Supplier>(`/suppliers/${id}`, data).then((res) => res.data),
   delete: (id: string) => api.delete(`/suppliers/${id}`),
+  getAnalysisReport: (supplierId: string, sraId: string) =>
+    api
+      .get<AnalysisReport>(
+        `/suppliers/${supplierId}/analysis-report/${sraId}`,
+      )
+      .then((res) => res.data),
 };
 
 // Shipping Risk Intelligence

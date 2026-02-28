@@ -399,16 +399,8 @@ function RiskScoreChart({ history }: { history: RiskHistoryEntry[] }) {
               strokeDasharray="3 3"
               stroke="var(--color-light-gray, #e5e7eb)"
             />
-            <XAxis
-              dataKey="label"
-              tick={{ fontSize: 10 }}
-              stroke="#9ca3af"
-            />
-            <YAxis
-              domain={[0, 100]}
-              tick={{ fontSize: 10 }}
-              stroke="#9ca3af"
-            />
+            <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="#9ca3af" />
+            <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} stroke="#9ca3af" />
             <Tooltip
               contentStyle={{
                 fontSize: 12,
@@ -416,18 +408,39 @@ function RiskScoreChart({ history }: { history: RiskHistoryEntry[] }) {
                 border: "1px solid #e5e7eb",
               }}
               formatter={(value: unknown, name: unknown) => [
-                typeof value === "number" ? value.toFixed(1) : String(value ?? ""),
+                typeof value === "number"
+                  ? value.toFixed(1)
+                  : String(value ?? ""),
                 name === "riskScore" ? "Risk Score" : "Swarm Score",
               ]}
               labelFormatter={(label, payload) => {
-                const point = payload?.[0]?.payload as ChartDataPoint | undefined;
-                return point?.date ? `${String(label)} — ${point.date}` : String(label);
+                const point = payload?.[0]?.payload as
+                  | ChartDataPoint
+                  | undefined;
+                return point?.date
+                  ? `${String(label)} — ${point.date}`
+                  : String(label);
               }}
             />
             {/* Threshold lines */}
-            <ReferenceLine y={25} stroke="#22c55e" strokeDasharray="4 4" strokeOpacity={0.5} />
-            <ReferenceLine y={50} stroke="#eab308" strokeDasharray="4 4" strokeOpacity={0.5} />
-            <ReferenceLine y={75} stroke="#f97316" strokeDasharray="4 4" strokeOpacity={0.5} />
+            <ReferenceLine
+              y={25}
+              stroke="#22c55e"
+              strokeDasharray="4 4"
+              strokeOpacity={0.5}
+            />
+            <ReferenceLine
+              y={50}
+              stroke="#eab308"
+              strokeDasharray="4 4"
+              strokeOpacity={0.5}
+            />
+            <ReferenceLine
+              y={75}
+              stroke="#f97316"
+              strokeDasharray="4 4"
+              strokeOpacity={0.5}
+            />
             <Line
               type="monotone"
               dataKey="riskScore"
@@ -452,10 +465,15 @@ function RiskScoreChart({ history }: { history: RiskHistoryEntry[] }) {
       </div>
       <div className="flex items-center gap-4 mt-3 text-[10px] text-medium-gray dark:text-gray-500">
         <span className="flex items-center gap-1.5">
-          <span className="inline-block w-3 h-0.5 bg-violet-600 rounded" /> Risk Score
+          <span className="inline-block w-3 h-0.5 bg-violet-600 rounded" /> Risk
+          Score
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="inline-block w-3 h-0.5 bg-sky-500 rounded border-dashed" style={{ borderBottom: "1px dashed #0ea5e9", height: 0, width: 12 }} /> Swarm Score
+          <span
+            className="inline-block w-3 h-0.5 bg-sky-500 rounded border-dashed"
+            style={{ borderBottom: "1px dashed #0ea5e9", height: 0, width: 12 }}
+          />{" "}
+          Swarm Score
         </span>
         <span className="ml-auto flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-green-500" /> &le;25
@@ -468,12 +486,18 @@ function RiskScoreChart({ history }: { history: RiskHistoryEntry[] }) {
   );
 }
 
-function RiskHistoryList({ history }: { history: RiskHistoryEntry[] }) {
+function RiskHistoryList({
+  history,
+  supplierId,
+}: {
+  history: RiskHistoryEntry[];
+  supplierId: string;
+}) {
   if (history.length === 0) return null;
 
   return (
     <Card>
-      <SectionHeading>Analysis History ({history.length})</SectionHeading>
+      <SectionHeading>Analysis Report ({history.length})</SectionHeading>
       <div className="mt-4 space-y-3">
         {history.map((h, idx) => {
           const dateStr = h.workflowRun?.runDate ?? h.createdAt;
@@ -481,9 +505,10 @@ function RiskHistoryList({ history }: { history: RiskHistoryEntry[] }) {
           const level = h.swarmSummary?.riskLevel;
 
           return (
-            <div
+            <Link
               key={h.id}
-              className={`border rounded-lg p-4 transition-colors ${idx === 0 ? "border-violet-200 dark:border-violet-800 bg-violet-50/30 dark:bg-violet-900/10" : "border-light-gray dark:border-gray-700"}`}
+              href={`/suppliers/${supplierId}/analysis/${h.id}`}
+              className={`block cursor-pointer border rounded-lg p-4 transition-colors hover:shadow-md hover:border-violet-200 dark:hover:border-violet-700 ${idx === 0 ? "border-violet-200 dark:border-violet-800 bg-violet-50/30 dark:bg-violet-900/10" : "border-light-gray dark:border-gray-700"}`}
             >
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
@@ -519,7 +544,8 @@ function RiskHistoryList({ history }: { history: RiskHistoryEntry[] }) {
 
               <div className="flex flex-wrap gap-3 text-[10px] text-medium-gray dark:text-gray-500">
                 <span>
-                  {h.risksSummary.total} risk{h.risksSummary.total !== 1 ? "s" : ""}
+                  {h.risksSummary.total} risk
+                  {h.risksSummary.total !== 1 ? "s" : ""}
                 </span>
                 {Object.entries(h.risksSummary.bySeverity)
                   .filter(([, n]) => n > 0)
@@ -533,7 +559,8 @@ function RiskHistoryList({ history }: { history: RiskHistoryEntry[] }) {
                   ))}
                 {h.opportunitiesCount > 0 && (
                   <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
-                    {h.opportunitiesCount} opp{h.opportunitiesCount !== 1 ? "s" : ""}
+                    {h.opportunitiesCount} opp
+                    {h.opportunitiesCount !== 1 ? "s" : ""}
                   </span>
                 )}
               </div>
@@ -543,7 +570,7 @@ function RiskHistoryList({ history }: { history: RiskHistoryEntry[] }) {
                   {h.description}
                 </p>
               )}
-            </div>
+            </Link>
           );
         })}
       </div>
@@ -1006,7 +1033,7 @@ export function SupplierDetailClient({ id }: { id: string }) {
                 {history && history.length > 0 && (
                   <>
                     <RiskScoreChart history={history} />
-                    <RiskHistoryList history={history} />
+                    <RiskHistoryList history={history} supplierId={id} />
                   </>
                 )}
               </>
