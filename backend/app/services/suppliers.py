@@ -1,12 +1,16 @@
 from uuid import UUID
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
 from app.models.supplier import Supplier
 from app.models.risk import Risk, RiskSeverity, RiskStatus
+from app.models.opportunity import Opportunity
+from app.models.supply_chain_risk_score import SupplyChainRiskScore
 from app.models.supplier_risk_analysis import SupplierRiskAnalysis
 from app.models.swarm_analysis import SwarmAnalysis
+from app.models.mitigation_plan import MitigationPlan
+from app.models.workflow_run import WorkflowRun
 
 
 def _parse_csv_line(line: str) -> list[str]:
@@ -462,3 +466,182 @@ def get_latest_swarm_by_supplier(
         }
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Supplier Metrics — full visibility for a single supplier by workflow run
+# ---------------------------------------------------------------------------
+
+def _serialize_risk(r: Risk) -> Dict[str, Any]:
+    return {
+        "id": str(r.id),
+        "title": r.title,
+        "description": r.description,
+        "severity": getattr(r.severity, "value", r.severity),
+        "status": getattr(r.status, "value", r.status),
+        "sourceType": r.sourceType,
+        "sourceData": r.sourceData,
+        "affectedRegion": r.affectedRegion,
+        "affectedSupplier": r.affectedSupplier,
+        "impactDescription": r.impactDescription,
+        "estimatedImpact": r.estimatedImpact,
+        "estimatedCost": float(r.estimatedCost) if r.estimatedCost is not None else None,
+        "createdAt": r.createdAt.isoformat() if r.createdAt else None,
+    }
+
+
+def _serialize_opportunity(o: Opportunity) -> Dict[str, Any]:
+    return {
+        "id": str(o.id),
+        "title": o.title,
+        "description": o.description,
+        "type": getattr(o.type, "value", o.type),
+        "status": getattr(o.status, "value", o.status),
+        "sourceType": o.sourceType,
+        "sourceData": o.sourceData,
+        "affectedRegion": o.affectedRegion,
+        "impactDescription": o.impactDescription,
+        "potentialBenefit": o.potentialBenefit,
+        "estimatedValue": float(o.estimatedValue) if o.estimatedValue is not None else None,
+        "createdAt": o.createdAt.isoformat() if o.createdAt else None,
+    }
+
+
+def _serialize_mitigation_plan(mp: MitigationPlan) -> Dict[str, Any]:
+    return {
+        "id": str(mp.id),
+        "title": mp.title,
+        "description": mp.description,
+        "actions": mp.actions or [],
+        "status": getattr(mp.status, "value", mp.status),
+        "assignedTo": mp.assignedTo,
+        "dueDate": mp.dueDate.isoformat() if mp.dueDate else None,
+        "createdAt": mp.createdAt.isoformat() if mp.createdAt else None,
+    }
+
+
+def get_supplier_metrics(
+    db: Session, supplier_id: UUID, oem_id: UUID
+) -> Optional[Dict[str, Any]]:
+    """
+    Full metrics for a supplier, scoped to the latest workflow run.
+
+    Flow:
+    1. Get the latest SupplierRiskAnalysis for this supplier.
+    2. Pick its workflowRunId.
+    3. Fetch all risks, opportunities, swarm analysis, supply chain score,
+       and mitigation plans produced in that workflow run for this supplier.
+    """
+    # 1. Latest risk analysis for this supplier
+    sra = (
+        db.query(SupplierRiskAnalysis)
+        .filter(
+            SupplierRiskAnalysis.supplierId == supplier_id,
+            SupplierRiskAnalysis.oemId == oem_id,
+        )
+        .order_by(SupplierRiskAnalysis.createdAt.desc())
+        .first()
+    )
+    if not sra:
+        return None
+
+    wf_run_id = sra.workflowRunId
+
+    # Workflow run metadata
+    wf_run = db.query(WorkflowRun).filter(WorkflowRun.id == wf_run_id).first()
+
+    # 2. All risks for this supplier in this workflow run
+    risks = (
+        db.query(Risk)
+        .filter(
+            Risk.workflowRunId == wf_run_id,
+            Risk.supplierId == supplier_id,
+        )
+        .order_by(Risk.createdAt.desc())
+        .all()
+    )
+
+    # 3. All opportunities for this supplier in this workflow run
+    opportunities = (
+        db.query(Opportunity)
+        .filter(
+            Opportunity.workflowRunId == wf_run_id,
+            Opportunity.supplierId == supplier_id,
+        )
+        .order_by(Opportunity.createdAt.desc())
+        .all()
+    )
+
+    # 4. Swarm analysis for this supplier in this workflow run
+    swarm = (
+        db.query(SwarmAnalysis)
+        .filter(
+            SwarmAnalysis.supplierRiskAnalysisId == sra.id,
+        )
+        .first()
+    )
+
+    # 5. Supply chain risk score for this workflow run
+    supply_chain_score = (
+        db.query(SupplyChainRiskScore)
+        .filter(SupplyChainRiskScore.workflowRunId == wf_run_id)
+        .order_by(SupplyChainRiskScore.createdAt.desc())
+        .first()
+    )
+
+    # 6. Mitigation plans for risks in this workflow run
+    risk_ids = [r.id for r in risks]
+    mitigation_plans: List[MitigationPlan] = []
+    if risk_ids:
+        mitigation_plans = (
+            db.query(MitigationPlan)
+            .filter(MitigationPlan.riskId.in_(risk_ids))
+            .order_by(MitigationPlan.createdAt.desc())
+            .all()
+        )
+
+    # Severity counts for quick summary
+    severity_counts: Dict[str, int] = {}
+    for r in risks:
+        sev = str(getattr(r.severity, "value", r.severity))
+        severity_counts[sev] = severity_counts.get(sev, 0) + 1
+
+    return {
+        "workflowRun": {
+            "id": str(wf_run.id) if wf_run else str(wf_run_id),
+            "runDate": wf_run.runDate.isoformat() if wf_run and wf_run.runDate else None,
+            "runIndex": wf_run.runIndex if wf_run else None,
+            "createdAt": wf_run.createdAt.isoformat() if wf_run and wf_run.createdAt else None,
+        },
+        "riskAnalysis": {
+            "id": str(sra.id),
+            "riskScore": float(sra.riskScore) if sra.riskScore is not None else 0,
+            "description": sra.description,
+            "metadata": sra.metadata_,
+            "createdAt": sra.createdAt.isoformat() if sra.createdAt else None,
+        },
+        "risks": [_serialize_risk(r) for r in risks],
+        "risksSummary": {
+            "total": len(risks),
+            "bySeverity": severity_counts,
+        },
+        "opportunities": [_serialize_opportunity(o) for o in opportunities],
+        "swarmAnalysis": {
+            "id": str(swarm.id),
+            "finalScore": float(swarm.finalScore) if swarm.finalScore is not None else 0,
+            "riskLevel": swarm.riskLevel,
+            "topDrivers": swarm.topDrivers or [],
+            "mitigationPlan": swarm.mitigationPlan or [],
+            "agents": swarm.agents or [],
+            "createdAt": swarm.createdAt.isoformat() if swarm.createdAt else None,
+        } if swarm else None,
+        "supplyChainScore": {
+            "id": str(supply_chain_score.id),
+            "overallScore": float(supply_chain_score.overallScore) if supply_chain_score.overallScore is not None else 0,
+            "breakdown": supply_chain_score.breakdown,
+            "severityCounts": supply_chain_score.severityCounts,
+            "summary": supply_chain_score.summary,
+            "createdAt": supply_chain_score.createdAt.isoformat() if supply_chain_score.createdAt else None,
+        } if supply_chain_score else None,
+        "mitigationPlans": [_serialize_mitigation_plan(mp) for mp in mitigation_plans],
+    }

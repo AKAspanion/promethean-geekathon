@@ -39,6 +39,12 @@ class SwarmAnalysis(Base):
         nullable=False,
     )
 
+    workflowRunId = Column(
+        UUID(as_uuid=True),
+        ForeignKey("workflow_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
     finalScore = Column(Numeric(5, 2), nullable=False)
     riskLevel = Column(String(20), nullable=False)
     topDrivers = Column(JSONB, nullable=False)
@@ -55,3 +61,4 @@ class SwarmAnalysis(Base):
     )
     supplier = relationship("Supplier", backref="swarm_analyses")
     oem = relationship("Oem", backref="swarm_analyses")
+    workflow_run = relationship("WorkflowRun", backref="swarm_analyses")

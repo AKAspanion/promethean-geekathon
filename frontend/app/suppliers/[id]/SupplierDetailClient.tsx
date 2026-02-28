@@ -1,26 +1,44 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { suppliersApi, type Supplier, type SupplierUpdatePayload } from '@/lib/api';
-import { AppNav } from '@/components/AppNav';
-import { useAuth } from '@/lib/auth-context';
-import { formatDistanceToNow } from 'date-fns';
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  suppliersApi,
+  type Supplier,
+  type SupplierUpdatePayload,
+  type SupplierMetrics,
+  type MetricsRisk,
+  type MetricsOpportunity,
+  type SwarmAgentResult,
+} from "@/lib/api";
+import { AppNav } from "@/components/AppNav";
+import { useAuth } from "@/lib/auth-context";
+import { formatDistanceToNow } from "date-fns";
 
 const severityBadgeClasses: Record<string, string> = {
-  low: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400',
-  medium: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400',
-  high: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400',
-  critical: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400',
+  low: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",
+  medium:
+    "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400",
+  high: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400",
+  critical: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
 };
 
 const swarmLevelBadgeClasses: Record<string, string> = {
-  LOW: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400',
-  MEDIUM: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400',
-  HIGH: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400',
-  CRITICAL: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400',
+  LOW: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",
+  MEDIUM:
+    "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400",
+  HIGH: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400",
+  CRITICAL: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
+};
+
+const sourceTypeLabels: Record<string, string> = {
+  news: "News",
+  global_news: "Global News",
+  weather: "Weather",
+  shipping: "Shipping",
+  traffic: "Traffic",
 };
 
 interface EditFormState {
@@ -50,7 +68,7 @@ function DeleteConfirmDialog({
           Delete supplier
         </h3>
         <p className="text-sm text-medium-gray dark:text-gray-400 mb-6">
-          Are you sure you want to delete{' '}
+          Are you sure you want to delete{" "}
           <span className="font-medium text-dark-gray dark:text-gray-200">
             {supplierName}
           </span>
@@ -71,7 +89,7 @@ function DeleteConfirmDialog({
             disabled={isPending}
             className="px-4 py-2 rounded-lg text-sm font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 transition-colors"
           >
-            {isPending ? 'Deleting…' : 'Delete'}
+            {isPending ? "Deleting\u2026" : "Delete"}
           </button>
         </div>
       </div>
@@ -91,12 +109,12 @@ function EditForm({
   isPending: boolean;
 }) {
   const [form, setForm] = useState<EditFormState>({
-    name: supplier.name ?? '',
-    location: supplier.location ?? '',
-    city: supplier.city ?? '',
-    country: supplier.country ?? '',
-    region: supplier.region ?? '',
-    commodities: supplier.commodities ?? '',
+    name: supplier.name ?? "",
+    location: supplier.location ?? "",
+    city: supplier.city ?? "",
+    country: supplier.country ?? "",
+    region: supplier.region ?? "",
+    commodities: supplier.commodities ?? "",
   });
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -107,17 +125,20 @@ function EditForm({
     e.preventDefault();
     const payload: SupplierUpdatePayload = {};
     if (form.name) payload.name = form.name;
-    if (form.location !== undefined) payload.location = form.location || undefined;
+    if (form.location !== undefined)
+      payload.location = form.location || undefined;
     if (form.city !== undefined) payload.city = form.city || undefined;
     if (form.country !== undefined) payload.country = form.country || undefined;
     if (form.region !== undefined) payload.region = form.region || undefined;
-    if (form.commodities !== undefined) payload.commodities = form.commodities || undefined;
+    if (form.commodities !== undefined)
+      payload.commodities = form.commodities || undefined;
     onSave(payload);
   };
 
-  const labelClass = 'block text-xs font-medium text-medium-gray dark:text-gray-400 mb-1';
+  const labelClass =
+    "block text-xs font-medium text-medium-gray dark:text-gray-400 mb-1";
   const inputClass =
-    'w-full rounded-lg border border-light-gray dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-dark-gray dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary-dark dark:focus:ring-primary-light';
+    "w-full rounded-lg border border-light-gray dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-dark-gray dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-primary-dark dark:focus:ring-primary-light";
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
@@ -202,7 +223,6 @@ function EditForm({
           />
         </div>
       </div>
-
       <div className="flex justify-end gap-3 pt-2">
         <button
           type="button"
@@ -217,12 +237,365 @@ function EditForm({
           disabled={isPending || !form.name}
           className="px-5 py-2 rounded-lg text-sm font-semibold text-white bg-primary-dark hover:bg-primary-light disabled:bg-light-gray dark:disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"
         >
-          {isPending ? 'Saving…' : 'Save changes'}
+          {isPending ? "Saving\u2026" : "Save changes"}
         </button>
       </div>
     </form>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* Metric sub-components                                               */
+/* ------------------------------------------------------------------ */
+
+function SectionHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <h3 className="text-sm font-semibold text-dark-gray dark:text-gray-200 uppercase tracking-wider">
+      {children}
+    </h3>
+  );
+}
+
+function Card({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-light-gray dark:border-gray-700 p-6 ${className}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+function RiskCard({ risk }: { risk: MetricsRisk }) {
+  return (
+    <div className="border border-light-gray dark:border-gray-700 rounded-lg p-4">
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <h4 className="text-sm font-medium text-dark-gray dark:text-gray-200 leading-snug">
+          {risk.title}
+        </h4>
+        <span
+          className={`shrink-0 inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${severityBadgeClasses[risk.severity] ?? "bg-light-gray/50 text-dark-gray"}`}
+        >
+          {risk.severity}
+        </span>
+      </div>
+      <p className="text-xs text-medium-gray dark:text-gray-400 line-clamp-2 mb-2">
+        {risk.description}
+      </p>
+      <div className="flex flex-wrap gap-2 text-[10px] text-medium-gray dark:text-gray-500">
+        <span className="px-1.5 py-0.5 rounded bg-off-white dark:bg-gray-700">
+          {sourceTypeLabels[risk.sourceType] ?? risk.sourceType}
+        </span>
+        {risk.affectedRegion && (
+          <span className="px-1.5 py-0.5 rounded bg-off-white dark:bg-gray-700">
+            {risk.affectedRegion}
+          </span>
+        )}
+        {risk.estimatedCost != null && (
+          <span className="px-1.5 py-0.5 rounded bg-off-white dark:bg-gray-700">
+            ${risk.estimatedCost.toLocaleString()}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function OpportunityCard({ opp }: { opp: MetricsOpportunity }) {
+  return (
+    <div className="border border-emerald-200 dark:border-emerald-800 rounded-lg p-4">
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <h4 className="text-sm font-medium text-dark-gray dark:text-gray-200 leading-snug">
+          {opp.title}
+        </h4>
+        <span className="shrink-0 inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold uppercase bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
+          {opp.type.replace(/_/g, " ")}
+        </span>
+      </div>
+      <p className="text-xs text-medium-gray dark:text-gray-400 line-clamp-2 mb-2">
+        {opp.description}
+      </p>
+      <div className="flex flex-wrap gap-2 text-[10px] text-medium-gray dark:text-gray-500">
+        <span className="px-1.5 py-0.5 rounded bg-off-white dark:bg-gray-700">
+          {sourceTypeLabels[opp.sourceType] ?? opp.sourceType}
+        </span>
+        {opp.estimatedValue != null && (
+          <span className="px-1.5 py-0.5 rounded bg-off-white dark:bg-gray-700">
+            ${opp.estimatedValue.toLocaleString()}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AgentBreakdownCard({ agent }: { agent: SwarmAgentResult }) {
+  return (
+    <div className="border border-light-gray dark:border-gray-700 rounded-lg p-4">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-semibold text-dark-gray dark:text-gray-200 uppercase tracking-wider">
+          {agent.agentType}
+        </span>
+        <div className="flex items-center gap-2">
+          <span
+            className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold ${swarmLevelBadgeClasses[agent.riskLevel] ?? "bg-light-gray/50 text-dark-gray"}`}
+          >
+            {agent.riskLevel}
+          </span>
+          <span className="text-xs text-medium-gray dark:text-gray-400">
+            {agent.score}/100
+          </span>
+        </div>
+      </div>
+      {agent.signals.length > 0 && (
+        <ul className="space-y-0.5 mb-2">
+          {agent.signals.slice(0, 3).map((s, i) => (
+            <li
+              key={i}
+              className="text-xs text-medium-gray dark:text-gray-400 truncate"
+            >
+              - {s}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="text-[10px] text-medium-gray dark:text-gray-500">
+        Confidence: {(agent.confidence * 100).toFixed(0)}%
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Metrics dashboard section                                           */
+/* ------------------------------------------------------------------ */
+
+function MetricsDashboard({ metrics }: { metrics: SupplierMetrics }) {
+  const {
+    workflowRun,
+    riskAnalysis,
+    risks,
+    risksSummary,
+    opportunities,
+    swarmAnalysis,
+    supplyChainScore,
+    mitigationPlans,
+  } = metrics;
+
+  if (!workflowRun) {
+    return (
+      <Card>
+        <p className="text-sm text-medium-gray dark:text-gray-400">
+          No workflow run data available yet. Trigger an analysis to see
+          metrics.
+        </p>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Workflow Run info */}
+      {/* <Card className="border-primary-dark/20 dark:border-primary-light/20">
+        <div className="flex items-center gap-3 mb-3">
+          <span className="rounded-md bg-blue-100 dark:bg-blue-900/30 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:text-blue-400">
+            Workflow Run
+          </span>
+          {workflowRun.runIndex != null && (
+            <span className="text-xs text-medium-gray dark:text-gray-400">
+              Run #{workflowRun.runIndex}
+            </span>
+          )}
+          {workflowRun.runDate && (
+            <span className="text-xs text-medium-gray dark:text-gray-400">
+              {format(new Date(workflowRun.runDate), 'MMM d, yyyy')}
+            </span>
+          )}
+        </div>
+        <div className="text-[10px] font-mono text-medium-gray dark:text-gray-500 break-all">
+          ID: {workflowRun.id}
+        </div>
+      </Card> */}
+
+      {/* Risk Analysis Score + AI Reasoning */}
+      {riskAnalysis && (
+        <Card className="border-violet-200 dark:border-violet-800">
+          <div className="flex items-center gap-3 mb-3">
+            <span className="rounded-md bg-violet-100 dark:bg-violet-900/30 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-400">
+              AI Risk Analysis
+            </span>
+            <span className="text-sm font-semibold text-dark-gray dark:text-gray-200">
+              Score: {riskAnalysis.riskScore.toFixed(1)}/100
+            </span>
+          </div>
+          {riskAnalysis.description && (
+            <p className="text-sm leading-relaxed text-dark-gray/80 dark:text-gray-300">
+              {riskAnalysis.description}
+            </p>
+          )}
+        </Card>
+      )}
+
+      {/* Swarm Analysis */}
+      {swarmAnalysis && (
+        <Card>
+          <div className="flex items-center gap-3 mb-4">
+            <SectionHeading>Swarm Analysis</SectionHeading>
+            <span
+              className={`inline-flex items-center px-2.5 py-0.5 rounded-lg text-xs font-semibold ${swarmLevelBadgeClasses[swarmAnalysis.riskLevel] ?? "bg-light-gray/50 text-dark-gray"}`}
+            >
+              {swarmAnalysis.riskLevel}
+            </span>
+            <span className="text-xs text-medium-gray dark:text-gray-400">
+              Score: {swarmAnalysis.finalScore}/100
+            </span>
+          </div>
+
+          {/* Top Drivers */}
+          {swarmAnalysis.topDrivers.length > 0 && (
+            <div className="mb-4">
+              <p className="text-xs font-medium text-medium-gray dark:text-gray-400 mb-2">
+                Top Risk Drivers
+              </p>
+              <ul className="space-y-1">
+                {swarmAnalysis.topDrivers.map((d, i) => (
+                  <li
+                    key={i}
+                    className="flex items-start gap-2 text-xs text-dark-gray dark:text-gray-300"
+                  >
+                    <span className="shrink-0 w-5 h-5 rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 flex items-center justify-center text-[10px] font-semibold mt-0.5">
+                      {i + 1}
+                    </span>
+                    {d}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Mitigation Plan from Swarm */}
+          {swarmAnalysis.mitigationPlan.length > 0 && (
+            <div className="mb-4">
+              <p className="text-xs font-medium text-medium-gray dark:text-gray-400 mb-2">
+                Suggested Mitigations
+              </p>
+              <ul className="space-y-1">
+                {swarmAnalysis.mitigationPlan.map((m, i) => (
+                  <li
+                    key={i}
+                    className="flex items-start gap-2 text-xs text-dark-gray dark:text-gray-300"
+                  >
+                    <span className="shrink-0 text-emerald-500 mt-0.5">
+                      &#10003;
+                    </span>
+                    {m}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Agent Breakdown */}
+          {swarmAnalysis.agents.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-medium-gray dark:text-gray-400 mb-2">
+                Agent Breakdown
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {swarmAnalysis.agents.map((agent) => (
+                  <AgentBreakdownCard key={agent.agentType} agent={agent} />
+                ))}
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
+
+      {/* Risks */}
+      <Card>
+        <div className="flex items-center justify-between mb-4">
+          <SectionHeading>Risks ({risksSummary.total})</SectionHeading>
+          {Object.keys(risksSummary.bySeverity).length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {Object.entries(risksSummary.bySeverity)
+                .filter(([, n]) => n > 0)
+                .map(([sev, count]) => (
+                  <span
+                    key={sev}
+                    className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ${severityBadgeClasses[sev] ?? "bg-light-gray/50 text-dark-gray"}`}
+                  >
+                    {sev}: {count}
+                  </span>
+                ))}
+            </div>
+          )}
+        </div>
+        {risks.length === 0 ? (
+          <p className="text-sm text-medium-gray dark:text-gray-400">
+            No risks detected in this workflow run.
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 gap-3">
+            {risks.map((r) => (
+              <RiskCard key={r.id} risk={r} />
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {/* Mitigation Plans */}
+      {mitigationPlans.length > 0 && (
+        <Card>
+          <SectionHeading>
+            Mitigation Plans ({mitigationPlans.length})
+          </SectionHeading>
+          <div className="space-y-3">
+            {mitigationPlans.map((mp) => (
+              <div
+                key={mp.id}
+                className="border border-light-gray dark:border-gray-700 rounded-lg p-4"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-sm font-medium text-dark-gray dark:text-gray-200">
+                    {mp.title}
+                  </h4>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-semibold uppercase bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
+                    {mp.status.replace(/_/g, " ")}
+                  </span>
+                </div>
+                <p className="text-xs text-medium-gray dark:text-gray-400 mb-2">
+                  {mp.description}
+                </p>
+                {mp.actions.length > 0 && (
+                  <ul className="space-y-0.5">
+                    {mp.actions.map((a, i) => (
+                      <li
+                        key={i}
+                        className="text-xs text-dark-gray dark:text-gray-300"
+                      >
+                        - {a}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Main component                                                      */
+/* ------------------------------------------------------------------ */
 
 export function SupplierDetailClient({ id }: { id: string }) {
   const router = useRouter();
@@ -232,16 +605,22 @@ export function SupplierDetailClient({ id }: { id: string }) {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   const { data: supplier, isLoading } = useQuery({
-    queryKey: ['supplier', id],
+    queryKey: ["supplier", id],
     queryFn: () => suppliersApi.getById(id),
+    enabled: hydrated && isLoggedIn === true,
+  });
+
+  const { data: metrics, isLoading: metricsLoading } = useQuery({
+    queryKey: ["supplier-metrics", id],
+    queryFn: () => suppliersApi.getMetrics(id),
     enabled: hydrated && isLoggedIn === true,
   });
 
   const updateMutation = useMutation({
     mutationFn: (data: SupplierUpdatePayload) => suppliersApi.update(id, data),
     onSuccess: (updated) => {
-      queryClient.setQueryData(['supplier', id], updated);
-      queryClient.invalidateQueries({ queryKey: ['suppliers'] });
+      queryClient.setQueryData(["supplier", id], updated);
+      queryClient.invalidateQueries({ queryKey: ["suppliers"] });
       setIsEditing(false);
     },
   });
@@ -249,8 +628,8 @@ export function SupplierDetailClient({ id }: { id: string }) {
   const deleteMutation = useMutation({
     mutationFn: () => suppliersApi.delete(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['suppliers'] });
-      router.push('/suppliers');
+      queryClient.invalidateQueries({ queryKey: ["suppliers"] });
+      router.push("/suppliers");
     },
   });
 
@@ -259,20 +638,31 @@ export function SupplierDetailClient({ id }: { id: string }) {
   return (
     <div className="min-h-screen bg-off-white dark:bg-gray-900">
       <header className="bg-white dark:bg-gray-800 shadow-sm border-b border-light-gray dark:border-gray-700">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <Link
                 href="/suppliers"
                 className="inline-flex items-center gap-1.5 rounded-lg border border-light-gray dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm font-medium text-dark-gray dark:text-gray-200 hover:bg-off-white dark:hover:bg-gray-600 transition-colors"
               >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                <svg
+                  className="h-4 w-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  aria-hidden
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M10 19l-7-7m0 0l7-7m-7 7h18"
+                  />
                 </svg>
                 Suppliers
               </Link>
               <h1 className="heading-2 text-primary-dark dark:text-primary-light">
-                {isLoading ? 'Loading…' : (supplier?.name ?? 'Supplier')}
+                {isLoading ? "Loading\u2026" : (supplier?.name ?? "Supplier")}
               </h1>
             </div>
             <AppNav />
@@ -280,20 +670,25 @@ export function SupplierDetailClient({ id }: { id: string }) {
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {isLoading ? (
           <div className="animate-pulse space-y-4">
             {[1, 2, 3].map((i) => (
-              <div key={i} className="h-16 bg-light-gray dark:bg-gray-700 rounded-xl" />
+              <div
+                key={i}
+                className="h-16 bg-light-gray dark:bg-gray-700 rounded-xl"
+              />
             ))}
           </div>
         ) : !supplier ? (
           <div className="text-center py-16">
-            <p className="body-text text-medium-gray dark:text-gray-400">Supplier not found.</p>
+            <p className="body-text text-medium-gray dark:text-gray-400">
+              Supplier not found.
+            </p>
           </div>
         ) : (
           <div className="space-y-6">
-            {/* Main card */}
+            {/* Supplier info card */}
             <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-light-gray dark:border-gray-700 p-6">
               <div className="flex items-start justify-between mb-6">
                 <div>
@@ -301,8 +696,10 @@ export function SupplierDetailClient({ id }: { id: string }) {
                     {supplier.name}
                   </h2>
                   <p className="text-sm text-medium-gray dark:text-gray-400 mt-0.5">
-                    Added{' '}
-                    {formatDistanceToNow(new Date(supplier.createdAt), { addSuffix: true })}
+                    Added{" "}
+                    {formatDistanceToNow(new Date(supplier.createdAt), {
+                      addSuffix: true,
+                    })}
                   </p>
                 </div>
 
@@ -313,8 +710,19 @@ export function SupplierDetailClient({ id }: { id: string }) {
                       onClick={() => setIsEditing(true)}
                       className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-dark-gray dark:text-gray-200 border border-light-gray dark:border-gray-600 bg-white dark:bg-gray-700 hover:bg-off-white dark:hover:bg-gray-600 transition-colors"
                     >
-                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      <svg
+                        className="h-4 w-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        aria-hidden
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                        />
                       </svg>
                       Edit
                     </button>
@@ -323,8 +731,19 @@ export function SupplierDetailClient({ id }: { id: string }) {
                       onClick={() => setShowDeleteDialog(true)}
                       className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 bg-white dark:bg-gray-700 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
                     >
-                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      <svg
+                        className="h-4 w-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        aria-hidden
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                        />
                       </svg>
                       Delete
                     </button>
@@ -342,7 +761,10 @@ export function SupplierDetailClient({ id }: { id: string }) {
                   <EditForm
                     supplier={supplier}
                     onSave={(data) => updateMutation.mutate(data)}
-                    onCancel={() => { setIsEditing(false); updateMutation.reset(); }}
+                    onCancel={() => {
+                      setIsEditing(false);
+                      updateMutation.reset();
+                    }}
                     isPending={updateMutation.isPending}
                   />
                 </>
@@ -353,7 +775,10 @@ export function SupplierDetailClient({ id }: { id: string }) {
                   <DetailField label="Country" value={supplier.country} />
                   <DetailField label="Region" value={supplier.region} />
                   <div className="sm:col-span-2">
-                    <DetailField label="Commodities" value={supplier.commodities} />
+                    <DetailField
+                      label="Commodities"
+                      value={supplier.commodities}
+                    />
                   </div>
                   {supplier.latestRiskLevel && (
                     <div className="sm:col-span-2">
@@ -362,7 +787,7 @@ export function SupplierDetailClient({ id }: { id: string }) {
                       </dt>
                       <dd>
                         <span
-                          className={`inline-flex items-center px-2.5 py-0.5 rounded-lg text-xs font-semibold ${swarmLevelBadgeClasses[supplier.latestRiskLevel] ?? 'bg-light-gray/50 text-dark-gray'}`}
+                          className={`inline-flex items-center px-2.5 py-0.5 rounded-lg text-xs font-semibold ${swarmLevelBadgeClasses[supplier.latestRiskLevel] ?? "bg-light-gray/50 text-dark-gray"}`}
                         >
                           {supplier.latestRiskLevel}
                         </span>
@@ -378,111 +803,22 @@ export function SupplierDetailClient({ id }: { id: string }) {
               )}
             </div>
 
-            {/* AI Reasoning card */}
-            {!isEditing && supplier.aiReasoning && (
-              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-violet-200 dark:border-violet-800 p-6">
-                <div className="flex items-center gap-3 mb-3">
-                  <span className="rounded-md bg-violet-100 dark:bg-violet-900/30 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-400">
-                    AI Reasoning
-                  </span>
-                  {supplier.latestRiskLevel && (
-                    <span
-                      className={`inline-flex items-center px-2.5 py-0.5 rounded-lg text-xs font-semibold ${swarmLevelBadgeClasses[supplier.latestRiskLevel] ?? 'bg-light-gray/50 text-dark-gray'}`}
-                    >
-                      {supplier.latestRiskLevel}
-                    </span>
-                  )}
-                  {supplier.latestRiskScore != null && (
-                    <span className="text-sm text-medium-gray dark:text-gray-400">
-                      Score: {supplier.latestRiskScore.toFixed(1)}/100
-                    </span>
-                  )}
-                </div>
-                <p className="text-sm leading-relaxed text-dark-gray/80 dark:text-gray-300">
-                  {supplier.aiReasoning}
-                </p>
-              </div>
-            )}
-
-            {/* Risk summary card */}
+            {/* Full Metrics Dashboard */}
             {!isEditing && (
-              <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-light-gray dark:border-gray-700 p-6">
-                <h3 className="text-sm font-semibold text-dark-gray dark:text-gray-200 uppercase tracking-wider mb-4">
-                  Risk summary
-                </h3>
-                {supplier.riskSummary.count === 0 ? (
-                  <p className="text-sm text-medium-gray dark:text-gray-400">No risks detected.</p>
-                ) : (
-                  <div className="space-y-3">
-                    <p className="text-sm font-medium text-dark-gray dark:text-gray-200">
-                      {supplier.riskSummary.count} risk{supplier.riskSummary.count !== 1 ? 's' : ''} detected
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {Object.entries(supplier.riskSummary.bySeverity)
-                        .filter(([, n]) => n > 0)
-                        .map(([sev, count]) => (
-                          <span
-                            key={sev}
-                            className={`inline-flex items-center px-2.5 py-0.5 rounded-lg text-xs font-medium ${severityBadgeClasses[sev] ?? 'bg-light-gray/50 text-dark-gray'}`}
-                          >
-                            {sev}: {count}
-                          </span>
-                        ))}
-                    </div>
-                    {supplier.riskSummary.latest && (
-                      <p className="text-xs text-medium-gray dark:text-gray-400">
-                        Latest: {supplier.riskSummary.latest.title}
-                      </p>
-                    )}
+              <>
+                {metricsLoading ? (
+                  <div className="animate-pulse space-y-4">
+                    {[1, 2, 3, 4].map((i) => (
+                      <div
+                        key={i}
+                        className="h-32 bg-light-gray dark:bg-gray-700 rounded-xl"
+                      />
+                    ))}
                   </div>
-                )}
-
-                {supplier.swarm && (
-                  <div className="mt-6 pt-4 border-t border-light-gray dark:border-gray-700">
-                    <h4 className="text-xs font-semibold text-dark-gray dark:text-gray-300 uppercase tracking-wider mb-3">
-                      AI swarm analysis
-                    </h4>
-                    <div className="flex items-center gap-3 mb-3">
-                      <span
-                        className={`inline-flex items-center px-2.5 py-0.5 rounded-lg text-xs font-semibold ${swarmLevelBadgeClasses[supplier.swarm.riskLevel] ?? 'bg-light-gray/50 text-dark-gray'}`}
-                      >
-                        {supplier.swarm.riskLevel}
-                      </span>
-                      <span className="text-xs text-medium-gray dark:text-gray-400">
-                        Final score: {supplier.swarm.finalScore}
-                      </span>
-                    </div>
-                    {supplier.swarm.topDrivers.length > 0 && (
-                      <div className="mb-3">
-                        <p className="text-xs font-medium text-medium-gray dark:text-gray-400 mb-1">
-                          Top drivers
-                        </p>
-                        <ul className="list-disc list-inside space-y-0.5">
-                          {supplier.swarm.topDrivers.map((d) => (
-                            <li key={d} className="text-xs text-dark-gray dark:text-gray-300">
-                              {d}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    {supplier.swarm.mitigationPlan.length > 0 && (
-                      <div>
-                        <p className="text-xs font-medium text-medium-gray dark:text-gray-400 mb-1">
-                          Suggested mitigations
-                        </p>
-                        <ul className="list-disc list-inside space-y-0.5">
-                          {supplier.swarm.mitigationPlan.map((m) => (
-                            <li key={m} className="text-xs text-dark-gray dark:text-gray-300">
-                              {m}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+                ) : metrics ? (
+                  <MetricsDashboard metrics={metrics} />
+                ) : null}
+              </>
             )}
           </div>
         )}
@@ -500,14 +836,22 @@ export function SupplierDetailClient({ id }: { id: string }) {
   );
 }
 
-function DetailField({ label, value }: { label: string; value?: string | null }) {
+function DetailField({
+  label,
+  value,
+}: {
+  label: string;
+  value?: string | null;
+}) {
   return (
     <div>
       <dt className="text-xs font-medium text-medium-gray dark:text-gray-400 uppercase tracking-wider mb-0.5">
         {label}
       </dt>
       <dd className="text-sm text-dark-gray dark:text-gray-200">
-        {value || <span className="text-medium-gray dark:text-gray-500">—</span>}
+        {value || (
+          <span className="text-medium-gray dark:text-gray-500">&mdash;</span>
+        )}
       </dd>
     </div>
   );
