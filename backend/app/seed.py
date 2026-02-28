@@ -127,6 +127,25 @@ SEED_SUPPLIERS = [
         "latestRiskScore": None,
         "latestRiskLevel": None,
     },
+    {
+        "id": UUID("f1a9b3e2-7d44-4c8c-9a11-55c2b5e0aa77"),
+        "oemId": UUID("9c682575-0285-437f-a1e5-fdba3128fbf5"),
+        "name": "Pars Industrial Metals Co.",
+        "location": "No. 25 Industrial Zone",
+        "city": "Bandar Abbas",
+        "country": "Iran",
+        "countryCode": "IR",
+        "region": "Middle East",
+        "commodities": "Steel billets; Industrial alloys",
+        "metadata_": {
+            "Tier": "2",
+            "Contact Email": "info@parsmetals.ir",
+            "Primary Contact": "Reza Karimi",
+            "Lead Time (days)": "22",
+        },
+        "latestRiskScore": None,
+        "latestRiskLevel": None,
+    },
 ]
 
 

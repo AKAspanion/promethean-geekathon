@@ -7,6 +7,7 @@ import {
   type Supplier,
   type ShippingRiskResult,
   type TrackingActivity,
+  type ShipmentMeta,
 } from "@/lib/api";
 import { useTheme } from "@/lib/theme-context";
 
@@ -50,6 +51,7 @@ const STANDARD_FIELDS = new Set([
   "sequence",
   "planned_arrival",
   "actual_arrival",
+  "departure_time",
   "transport_mode",
   "awb_code",
   "current_status",
@@ -84,6 +86,7 @@ export function ShippingRiskDashboard() {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<ShippingRiskResult | null>(null);
   const [timeline, setTimeline] = useState<TrackingActivity[]>([]);
+  const [shipmentMeta, setShipmentMeta] = useState<ShipmentMeta | null>(null);
   const [trackingLabel, setTrackingLabel] = useState("");
   const [loadingTracking, setLoadingTracking] = useState(false);
 
@@ -128,12 +131,15 @@ export function ShippingRiskDashboard() {
   const handleViewTracking = async (id: string, name: string) => {
     setTrackingLabel(name);
     setTimeline([]);
+    setShipmentMeta(null);
     setLoadingTracking(true);
     try {
-      const records = await shippingRiskApi.getTracking(id);
-      setTimeline(Array.isArray(records) ? records : []);
+      const res = await shippingRiskApi.getTracking(id);
+      setTimeline(Array.isArray(res.timeline) ? res.timeline : []);
+      setShipmentMeta(res.meta);
     } catch {
       setTimeline([]);
+      setShipmentMeta(null);
     } finally {
       setLoadingTracking(false);
     }
@@ -305,6 +311,75 @@ export function ShippingRiskDashboard() {
           </>
         )}
 
+        {/* ── Shipment overview card ── */}
+        {shipmentMeta && (
+          <div className="rounded-xl border border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-700/50 p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <strong className="text-xs uppercase tracking-wider text-medium-gray dark:text-gray-400">
+                Shipment Overview
+              </strong>
+              {shipmentMeta.current_status && (
+                <span
+                  className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${
+                    shipmentMeta.current_status === "IN_TRANSIT"
+                      ? "border-primary-light/60 bg-primary-light/10 text-primary-dark dark:text-primary-light"
+                      : shipmentMeta.current_status === "DELIVERED"
+                        ? "border-green-500/60 bg-green-500/10 text-green-700 dark:text-green-400"
+                        : "border-light-gray dark:border-gray-600 bg-light-gray/50 dark:bg-gray-700 text-medium-gray dark:text-gray-400"
+                  }`}
+                >
+                  {shipmentMeta.current_status}
+                </span>
+              )}
+            </div>
+
+            <div className="mb-3 flex items-center gap-2 text-sm text-dark-gray dark:text-gray-200">
+              <span className="font-medium">
+                {[shipmentMeta.origin_city, shipmentMeta.origin_country].filter(Boolean).join(", ") || "—"}
+              </span>
+              <span className="text-medium-gray dark:text-gray-400">→</span>
+              <span className="font-medium">
+                {[shipmentMeta.destination_city, shipmentMeta.destination_country].filter(Boolean).join(", ") || "—"}
+              </span>
+            </div>
+
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-medium-gray dark:text-gray-400">
+              {shipmentMeta.awb_code && (
+                <span>
+                  <span className="font-medium">AWB:</span> {shipmentMeta.awb_code}
+                </span>
+              )}
+              {shipmentMeta.shipment_id != null && (
+                <span>
+                  <span className="font-medium">Shipment ID:</span> {shipmentMeta.shipment_id}
+                </span>
+              )}
+              {shipmentMeta.pickup_date && (
+                <span>
+                  <span className="font-medium">Pickup:</span>{" "}
+                  {new Date(shipmentMeta.pickup_date).toLocaleDateString()}
+                </span>
+              )}
+              {shipmentMeta.etd && (
+                <span>
+                  <span className="font-medium">ETD:</span>{" "}
+                  {new Date(shipmentMeta.etd).toLocaleDateString()}
+                </span>
+              )}
+              {shipmentMeta.transit_days_estimated != null && (
+                <span>
+                  <span className="font-medium">Transit:</span> {shipmentMeta.transit_days_estimated} days
+                </span>
+              )}
+              {shipmentMeta.current_checkpoint_sequence != null && (
+                <span>
+                  <span className="font-medium">Checkpoint:</span> {shipmentMeta.current_checkpoint_sequence} of {timeline.length}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* ── Tracking timeline ── */}
         <div>
           <div className="mb-3 flex items-center gap-2">
@@ -342,7 +417,9 @@ export function ShippingRiskDashboard() {
                   statusLower.includes("exception");
                 const isCompleted =
                   statusLower.includes("completed") ||
-                  statusLower.includes("delivered");
+                  statusLower.includes("delivered") ||
+                  statusLower.includes("complete");
+                const isCurrent = statusLower.includes("current");
 
                 return (
                   <li key={i} className="mb-6 last:mb-0">
@@ -351,7 +428,11 @@ export function ShippingRiskDashboard() {
                       className={`absolute -left-[9px] mt-1 flex h-4 w-4 items-center justify-center rounded-full ring-2 ring-white dark:ring-gray-800 ${trackingDotClass(act.status)}`}
                     />
 
-                    <div className="rounded-xl border border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-700/50 p-3">
+                    <div className={`rounded-xl border p-3 ${
+                      isCurrent
+                        ? "border-primary-light/50 bg-sky-blue/20 dark:bg-primary-dark/20"
+                        : "border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-700/50"
+                    }`}>
                       {/* Status + transport mode */}
                       <div className="flex flex-wrap items-center gap-2">
                         {act.status && (
@@ -361,7 +442,9 @@ export function ShippingRiskDashboard() {
                                 ? "high"
                                 : isCompleted
                                   ? "low"
-                                  : "medium",
+                                  : isCurrent
+                                    ? "medium"
+                                    : "",
                             )}`}
                           >
                             {act.status}
@@ -386,6 +469,12 @@ export function ShippingRiskDashboard() {
                           <span>
                             🕐 Arrived:{" "}
                             {new Date(act.actual_arrival).toLocaleDateString()}
+                          </span>
+                        )}
+                        {act.departure_time && (
+                          <span>
+                            🚀 Departed:{" "}
+                            {new Date(act.departure_time).toLocaleDateString()}
                           </span>
                         )}
                         {act.planned_arrival && (

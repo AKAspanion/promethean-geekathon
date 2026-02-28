@@ -525,8 +525,28 @@ export interface TrackingActivity {
   sequence?: number;
   planned_arrival?: string;
   actual_arrival?: string;
+  departure_time?: string;
   transport_mode?: string;
   [key: string]: unknown;
+}
+
+export interface ShipmentMeta {
+  awb_code?: string;
+  shipment_id?: number;
+  current_status?: string;
+  origin_city?: string;
+  origin_country?: string;
+  destination_city?: string;
+  destination_country?: string;
+  pickup_date?: string;
+  etd?: string;
+  transit_days_estimated?: number;
+  current_checkpoint_sequence?: number;
+}
+
+export interface TrackingResponse {
+  timeline: TrackingActivity[];
+  meta: ShipmentMeta | null;
 }
 
 const MOCK_SERVER_URL =
@@ -542,18 +562,20 @@ export const shippingRiskApi = {
       .post<ShippingRiskResult>(`/shipping/shipping-risk/${supplierId}`)
       .then((res) => res.data),
 
-  // Fetches tracking records from the mock server and converts route_plan
-  // checkpoints into timeline entries for the dashboard.
-  getTracking: (supplierId: string): Promise<TrackingActivity[]> =>
-    fetch(
-      `${MOCK_SERVER_URL}/mock/shipment-tracking?q=supplier_id:${encodeURIComponent(supplierId)}`,
-    )
-      .then((res) => res.json())
+  // Fetches tracking via backend proxy (backend calls mock server).
+  // Same response shape as before: { items: [...] } from proxy, then we build TrackingResponse.
+  getTracking: (supplierId: string): Promise<TrackingResponse> =>
+    api
+      .get<{ items?: { data: Record<string, unknown> }[] }>(
+        `/shipping/tracking/by-supplier/${encodeURIComponent(supplierId)}`,
+      )
+      .then((res) => res.data)
       .then((payload) => {
         const items = (payload.items ?? []) as {
           data: Record<string, unknown>;
         }[];
         const out: TrackingActivity[] = [];
+        let shipmentMeta: ShipmentMeta | null = null;
 
         for (const item of items) {
           const data = item.data ?? {};
@@ -562,6 +584,25 @@ export const shippingRiskApi = {
             ? (td!.route_plan as Record<string, unknown>[])
             : null;
           const meta = (td?.shipment_meta ?? {}) as Record<string, unknown>;
+
+          // Extract shipment metadata from the first item
+          if (!shipmentMeta && Object.keys(meta).length > 0) {
+            const origin = meta.origin as Record<string, unknown> | undefined;
+            const dest = meta.destination as Record<string, unknown> | undefined;
+            shipmentMeta = {
+              awb_code: meta.awb_code as string | undefined,
+              shipment_id: meta.shipment_id as number | undefined,
+              current_status: meta.current_status as string | undefined,
+              origin_city: origin?.city as string | undefined,
+              origin_country: origin?.country as string | undefined,
+              destination_city: dest?.city as string | undefined,
+              destination_country: dest?.country as string | undefined,
+              pickup_date: meta.pickup_date as string | undefined,
+              etd: meta.etd as string | undefined,
+              transit_days_estimated: meta.transit_days_estimated as number | undefined,
+              current_checkpoint_sequence: meta.current_checkpoint_sequence as number | undefined,
+            };
+          }
 
           if (routePlan && routePlan.length > 0) {
             // Sort checkpoints by sequence
@@ -588,9 +629,8 @@ export const shippingRiskApi = {
                 sequence: cp.sequence as number | undefined,
                 planned_arrival: cp.planned_arrival as string | undefined,
                 actual_arrival: cp.actual_arrival as string | undefined,
+                departure_time: cp.departure_time as string | undefined,
                 transport_mode: cp.transport_mode as string | undefined,
-                awb_code: meta.awb_code as string | undefined,
-                current_status: meta.current_status as string | undefined,
               });
             }
           } else {
@@ -603,6 +643,6 @@ export const shippingRiskApi = {
           }
         }
 
-        return out;
+        return { timeline: out, meta: shipmentMeta };
       }),
 };
