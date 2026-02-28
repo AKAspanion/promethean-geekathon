@@ -684,7 +684,7 @@ async def _run_analysis_for_oem(
             workflow_run_id=workflow_run_id,
         )
 
-    # 4. Risk score (OEM-level)
+    # 4. Per-supplier risk scores (compute these FIRST so we can average them)
     all_risks = (
         db.query(Risk)
         .filter(
@@ -694,26 +694,9 @@ async def _run_analysis_for_oem(
         )
         .all()
     )
-    overall, breakdown, severity_counts = _compute_risk_score(all_risks)
-    score_ent = SupplyChainRiskScore(
-        oemId=oem_id,
-        workflowRunId=workflow_run_id,
-        overallScore=overall,
-        breakdown=breakdown,
-        severityCounts=severity_counts,
-        riskIds=",".join(str(r.id) for r in all_risks) if all_risks else None,
-    )
-    db.add(score_ent)
-    db.commit()
-    logger.info(
-        "_run_analysis_for_oem: risk score stored overall=%s for OEM %s (risks=%d)",
-        overall,
-        scope["oemName"],
-        len(all_risks),
-    )
 
-    # 4b. Per-supplier risk scores (supplier-level)
     suppliers = get_suppliers(db, oem_id)
+    supplier_scores: list[float] = []
     for supplier in suppliers:
         supplier_risks = (
             db.query(Risk)
@@ -732,6 +715,7 @@ async def _run_analysis_for_oem(
         supplier_score, _, severity_counts = _compute_risk_score(supplier_risks)
         supplier.latestRiskScore = supplier_score
         supplier.latestRiskLevel = _score_to_level(float(supplier_score))
+        supplier_scores.append(float(supplier_score))
 
         analysis_entry = SupplierRiskAnalysis(
             oemId=oem_id,
@@ -746,6 +730,38 @@ async def _run_analysis_for_oem(
         )
         db.add(analysis_entry)
     db.commit()
+
+    # 4b. OEM-level risk score (weighted blend of per-supplier scores)
+    # Use breakdown/severity_counts from pooled risks for informational purposes,
+    # but derive the overall score from supplier averages so it stays proportional.
+    _, breakdown, severity_counts = _compute_risk_score(all_risks)
+
+    if supplier_scores:
+        avg_score = sum(supplier_scores) / len(supplier_scores)
+        max_score = max(supplier_scores)
+        # 60% average + 40% worst-case supplier
+        overall = round(0.6 * avg_score + 0.4 * max_score, 2)
+    else:
+        overall = 0.0
+
+    score_ent = SupplyChainRiskScore(
+        oemId=oem_id,
+        workflowRunId=workflow_run_id,
+        overallScore=overall,
+        breakdown=breakdown,
+        severityCounts=severity_counts,
+        riskIds=",".join(str(r.id) for r in all_risks) if all_risks else None,
+    )
+    db.add(score_ent)
+    db.commit()
+    logger.info(
+        "_run_analysis_for_oem: risk score stored overall=%s for OEM %s "
+        "(supplier_scores=%s risks=%d)",
+        overall,
+        scope["oemName"],
+        [round(s, 2) for s in supplier_scores],
+        len(all_risks),
+    )
 
     # Broadcast after supplier-level risk scores have been updated.
     await _broadcast_suppliers_for_oem(db, oem_id)

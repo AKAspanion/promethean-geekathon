@@ -167,9 +167,11 @@ async def cached_get(
         )
         return response
 
-    expiry_ts = time.monotonic() + CACHE_TTL_SECONDS
-    async with _lock:
-        _cache[key] = (expiry_ts, response.status_code, body)
+    # Only cache successful responses — never cache 4xx/5xx errors
+    if response.status_code < 400:
+        expiry_ts = time.monotonic() + CACHE_TTL_SECONDS
+        async with _lock:
+            _cache[key] = (expiry_ts, response.status_code, body)
 
     await _log_external_api_call(
         service=service,

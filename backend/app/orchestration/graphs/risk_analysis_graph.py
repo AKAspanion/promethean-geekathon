@@ -1179,7 +1179,23 @@ async def _aggregate_oem_score(
         }
         for r in all_risks_orm
     ]
-    overall, breakdown, severity_counts = compute_score_from_dicts(risk_dicts)
+    # Breakdown & severity_counts from pooled risks (for informational display).
+    _, breakdown, severity_counts = compute_score_from_dicts(risk_dicts)
+
+    # ── OEM score = weighted blend of per-supplier scores ─────────────────
+    supplier_results = state.get("supplier_results") or []
+    supplier_scores = [
+        sr.get("unified_score") or 0.0 for sr in supplier_results
+    ]
+
+    if supplier_scores:
+        avg_score = sum(supplier_scores) / len(supplier_scores)
+        max_score = max(supplier_scores)
+        # 60% average + 40% worst-case supplier
+        overall = round(0.6 * avg_score + 0.4 * max_score, 2)
+    else:
+        overall = 0.0
+
     oem_risk_level = score_to_level(overall)
 
     # Generate an executive summary for the OEM risk score
@@ -1205,8 +1221,11 @@ async def _aggregate_oem_score(
     db.commit()
 
     logger.info(
-        "RiskAnalysisGraph: OEM %s — overall_score=%.2f level=%s risks=%d summary=%s",
-        state["oem_id"], overall, oem_risk_level, len(all_risks_orm),
+        "RiskAnalysisGraph: OEM %s — overall_score=%.2f level=%s "
+        "supplier_scores=%s risks=%d summary=%s",
+        state["oem_id"], overall, oem_risk_level,
+        [round(s, 2) for s in supplier_scores],
+        len(all_risks_orm),
         (summary or "")[:80],
     )
 

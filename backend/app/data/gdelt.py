@@ -40,7 +40,10 @@ class GDELTDataSource(BaseDataSource):
         results: list[DataSourceResult] = []
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(
+                follow_redirects=True,
+                headers={"User-Agent": "SupplyChainMonitor/1.0"},
+            ) as client:
 
                 async def _fetch_keyword(keyword: str) -> list[dict]:
                     try:
@@ -51,7 +54,7 @@ class GDELTDataSource(BaseDataSource):
                                 "query": keyword,
                                 "mode": "artlist",
                                 "maxrecords": 10,
-                                "timespan": "3days",
+                                "timespan": "4320",
                                 "format": "json",
                             },
                             timeout=15.0,
@@ -64,15 +67,32 @@ class GDELTDataSource(BaseDataSource):
                                 keyword,
                             )
                             return []
-                        return r.json().get("articles") or []
+                        data = r.json()
+                        if not isinstance(data, dict):
+                            logger.warning(
+                                "GDELT unexpected response type %s for %r",
+                                type(data).__name__,
+                                keyword,
+                            )
+                            return []
+                        return data.get("articles") or []
                     except Exception as exc:
-                        logger.warning("GDELT keyword %r error: %s", keyword, exc)
+                        logger.warning(
+                            "GDELT keyword %r error [%s]: %r",
+                            keyword,
+                            type(exc).__name__,
+                            exc,
+                        )
                         return []
 
-                # Fetch all keywords concurrently (cap at 5 to respect GDELT rate limits)
-                all_articles = await asyncio.gather(
-                    *[_fetch_keyword(kw) for kw in keywords[:5]]
-                )
+                # Fetch keywords sequentially with delay to avoid GDELT 429 rate limits
+                all_articles: list[list[dict]] = []
+                for i, kw in enumerate(keywords[:5]):
+                    if i > 0:
+                        await asyncio.sleep(2.0)
+                    articles = await _fetch_keyword(kw)
+                    all_articles.append(articles)
+
                 for articles in all_articles:
                     for article in articles:
                         title = (article.get("title") or "").strip()

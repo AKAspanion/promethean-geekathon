@@ -1,22 +1,22 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { useMutation } from '@tanstack/react-query';
-import { oemsApi } from '@/lib/api';
-import { useAuth } from '@/lib/auth-context';
-import { AppNav } from '@/components/AppNav';
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useMutation } from "@tanstack/react-query";
+import { oemsApi } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
+import { AppNav } from "@/components/AppNav";
 
 export default function LoginPage() {
   const router = useRouter();
   const { login } = useAuth();
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState("");
 
   const loginMutation = useMutation({
     mutationFn: (emailAddress: string) => oemsApi.login(emailAddress),
     onSuccess: (data) => {
       login(data.token, data.oem);
-      router.push('/');
+      router.push("/");
     },
   });
 
@@ -32,7 +32,7 @@ export default function LoginPage() {
       <header className="bg-white dark:bg-gray-800 shadow-sm border-b border-light-gray dark:border-gray-700">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
-            <h1 className="heading-2 text-primary-dark dark:text-primary-light">
+            <h1 className="heading-3 text-primary-dark dark:text-primary-light">
               OEM Login
             </h1>
             <AppNav />
@@ -69,14 +69,14 @@ export default function LoginPage() {
               disabled={loginMutation.isPending}
               className="w-full px-5 py-2.5 rounded-lg bg-primary-dark hover:bg-primary-light disabled:bg-light-gray dark:disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium transition-colors text-base"
             >
-              {loginMutation.isPending ? 'Signing in...' : 'Sign in'}
+              {loginMutation.isPending ? "Signing in..." : "Sign in"}
             </button>
           </form>
           {loginMutation.isError && (
             <p className="mt-4 text-sm text-red-600 dark:text-red-400">
               {loginMutation.error instanceof Error
                 ? loginMutation.error.message
-                : 'Sign in failed'}
+                : "Sign in failed"}
             </p>
           )}
           <p className="mt-6 body-text text-medium-gray dark:text-gray-400 text-center">

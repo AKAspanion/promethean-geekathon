@@ -543,7 +543,7 @@ async def _news_risk_llm_node(state: NewsAgentState) -> NewsAgentState:
             context, call_id, provider, model_name, len(prompt_text),
         )
         await _broadcast_progress(
-            "llm_start", f"Running {context} risk extraction via {provider}",
+            "llm_start", f"Running {context} risk extraction",
             context, {"call_id": call_id, "provider": provider, "model": str(model_name)},
             oem_name=oem_name, supplier_name=supplier_name,
         )

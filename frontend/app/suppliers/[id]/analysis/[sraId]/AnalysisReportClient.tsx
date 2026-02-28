@@ -454,7 +454,9 @@ function NewsCombinedPanel({
                     </p>
                   ) : null}
                   <div className="flex gap-2 mt-1 text-[10px] text-medium-gray dark:text-gray-500">
-                    {data.source ? <span>Source: {String(data.source)}</span> : null}
+                    {data.source ? (
+                      <span>Source: {String(data.source)}</span>
+                    ) : null}
                     {data.publishedAt ? (
                       <span>
                         {format(
@@ -709,7 +711,7 @@ export function AnalysisReportClient({
               Back
             </Link>
             <div>
-              <h1 className="heading-2 text-primary-dark dark:text-primary-light">
+              <h1 className="heading-3 text-primary-dark dark:text-primary-light">
                 Analysis Report
               </h1>
               {report ? (
