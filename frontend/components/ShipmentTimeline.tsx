@@ -78,7 +78,7 @@ export function ShipmentTimeline({ days }: ShipmentTimelineProps) {
       </div>
 
       {/* Wrapping grid — no horizontal scroll */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5">
         {days.map((d) => {
           const colors = RISK_LEVEL_COLORS[d.risk.overall_level] ?? RISK_LEVEL_COLORS.low;
           const dot = RISK_DOT[d.risk.overall_level];
@@ -123,11 +123,11 @@ export function ShipmentTimeline({ days }: ShipmentTimelineProps) {
 
               {/* City + leg label + date */}
               <div>
-                <p className="text-[13px] font-bold leading-tight text-dark-gray dark:text-gray-100 truncate">
+                <p className="text-[13px] font-bold leading-tight text-dark-gray dark:text-gray-100">
                   {cityName}
                 </p>
                 {legLabel && legLabel !== cityName && (
-                  <p className="text-[10px] leading-tight text-medium-gray dark:text-gray-500 truncate mt-0.5">
+                  <p className="text-[10px] leading-tight text-medium-gray dark:text-gray-500 mt-0.5">
                     {legLabel}
                   </p>
                 )}
@@ -171,9 +171,9 @@ export function ShipmentTimeline({ days }: ShipmentTimelineProps) {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-1 min-w-0">
-      <span className="text-medium-gray dark:text-gray-400 shrink-0">{label}</span>
-      <span className="font-semibold text-dark-gray dark:text-gray-200 truncate text-right">{value}</span>
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[10px] text-medium-gray dark:text-gray-400">{label}</span>
+      <span className="text-[12px] font-semibold text-dark-gray dark:text-gray-200">{value}</span>
     </div>
   );
 }

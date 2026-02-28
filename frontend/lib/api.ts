@@ -263,9 +263,15 @@ export const oemsApi = {
 };
 
 // Weather agent API (shipment weather exposure)
-export async function fetchShipmentWeatherExposure(): Promise<WeatherGraphResponse> {
+export async function fetchShipmentWeatherExposure(supplierId: string): Promise<WeatherGraphResponse> {
+  const token = typeof window !== "undefined" ? localStorage.getItem("oem_token") : null;
   const res = await fetch(`${API_BASE_URL}/api/v1/shipment/weather-exposure`, {
     method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ supplier_id: supplierId }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => null);
