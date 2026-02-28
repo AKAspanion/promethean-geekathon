@@ -49,7 +49,7 @@ export interface DayRiskSnapshot {
 export interface WeatherRisk {
   title: string;
   description: string;
-  severity: "low" | "medium" | "high" | "critical";
+  severity: "low" | "moderate" | "medium" | "high" | "critical";
   affectedRegion: string | null;
   affectedSupplier: string | null;
   estimatedImpact: string | null;

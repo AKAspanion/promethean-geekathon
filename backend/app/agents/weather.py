@@ -929,6 +929,7 @@ async def _build_exposure_risks_node(state: WeatherState) -> WeatherState:
                     "weather_exposure_score": exposure_score,
                     "peak_risk_score": peak_score,
                     "peak_risk_day": peak_day,
+                    "peak_risk_date": peak_date,
                     "high_risk_day_count": high_risk_count,
                     "route": f"{supplier_city} -> {oem_city}",
                 },
