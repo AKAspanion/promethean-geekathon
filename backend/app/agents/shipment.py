@@ -16,7 +16,6 @@ import json
 import logging
 import time
 import uuid as _uuid
-from datetime import datetime
 from typing import Any, TypedDict
 
 import httpx
@@ -28,6 +27,13 @@ from app.services.agent_orchestrator import _extract_json
 from app.services.agent_types import OemScope
 from app.services.langchain_llm import get_chat_model
 from app.services.llm_client import _persist_llm_log
+from app.services.shipping_shared import (
+    SHIPMENT_FALLBACK_RESULT,
+    SHIPMENT_RISK_SYSTEM_PROMPT,
+    build_narrative_context,
+    extract_tracking_data_from_records,
+    parse_tracking_data_to_records,
+)
 from app.services.websocket_manager import manager as ws_manager
 
 logger = logging.getLogger(__name__)
@@ -87,53 +93,16 @@ def _risk_level_from_score(score: float) -> str:
     return "Critical"
 
 
-_FALLBACK_RESULT: dict[str, Any] = {
-    "shipping_risk_score": 0.5,
-    "risk_level": "Medium",
-    "delay_risk": {"score": 50, "label": "medium"},
-    "stagnation_risk": {"score": 50, "label": "medium"},
-    "velocity_risk": {"score": 0, "label": "low"},
-    "risk_factors": ["Agent unavailable; risk could not be assessed"],
-    "recommended_actions": ["Manually review shipments for this supplier"],
-    "shipment_metadata": None,
-}
+# Alias so existing references inside this module continue to work
+_FALLBACK_RESULT = SHIPMENT_FALLBACK_RESULT
 
 
 # ---------------------------------------------------------------------------
 # LLM chain
 # ---------------------------------------------------------------------------
 
-_RISK_SYSTEM_PROMPT = (
-    "You are a Shipment Risk Intelligence Agent for a manufacturing "
-    "supply chain.\n\n"
-    "You will be given JSON context containing:\n"
-    "- oem: OEM details (id, name, locations, commodities)\n"
-    "- supplier: Supplier details (name, city, country, region, commodities)\n"
-    "- tracking: List of shipment tracking records for this supplier\n\n"
-    "Your goals:\n"
-    "1. Analyze the tracking timeline for delays, stagnation, and velocity "
-    "anomalies.\n"
-    "2. Calculate risk scores (0-100) for delay_risk, stagnation_risk, and "
-    "velocity_risk.\n"
-    "3. Identify specific risk factors from the data.\n"
-    "4. Produce concrete, actionable recommendations to mitigate the risks."
-    "\n\n"
-    "Return a single JSON object with this exact shape:\n"
-    "{{\n"
-    '  "shipping_risk_score": <float 0.0-1.0>,\n'
-    '  "risk_level": <"Low" | "Medium" | "High" | "Critical">,\n'
-    '  "delay_risk": {{ "score": <0-100>, "label": '
-    '<"low"|"medium"|"high"|"critical"> }},\n'
-    '  "stagnation_risk": {{ "score": <0-100>, "label": '
-    '<"low"|"medium"|"high"|"critical"> }},\n'
-    '  "velocity_risk": {{ "score": <0-100>, "label": '
-    '<"low"|"medium"|"high"|"critical"> }},\n'
-    '  "risk_factors": [<string>, ...],\n'
-    '  "recommended_actions": [<string>, ...],\n'
-    '  "shipment_metadata": {{ <summary of key fields> }}\n'
-    "}}\n\n"
-    "Respond strictly as a single JSON object; no prose outside JSON."
-)
+# System prompt is now sourced from shipping_shared — edit it there to affect both flows
+_RISK_SYSTEM_PROMPT = SHIPMENT_RISK_SYSTEM_PROMPT
 
 _risk_prompt: ChatPromptTemplate | None = None
 
@@ -235,6 +204,12 @@ async def _fetch_tracking_node(state: ShipmentGraphState) -> dict[str, Any]:
     supplier_name = scope.get("supplierName") or ""
     oem_name = scope.get("oemName") or ""
 
+    print("\n" + "=" * 60)
+    print("[ShipmentAgent/Graph] ▶ fetch_tracking_node called")
+    print(f"[ShipmentAgent/Graph] Scope received:\n{json.dumps(dict(scope), indent=2)}")
+    print(f"[ShipmentAgent/Graph] supplier_id={supplier_id!r}  supplier_name={supplier_name!r}")
+    print("=" * 60)
+
     await _broadcast_progress(
         "fetch_tracking", f"Fetching tracking data for {supplier_name or supplier_id}",
         oem_name=oem_name, supplier_name=supplier_name,
@@ -257,13 +232,13 @@ async def _fetch_tracking_node(state: ShipmentGraphState) -> dict[str, Any]:
 
     records = await _fetch_tracking_from_mock_server(supplier_id)
 
-    # The mock server returns a list of tracking record dicts.  Use the first
-    # record's tracking_data (Shiprocket format) if available.
-    tracking_data: dict[str, Any] = {}
-    if records:
-        first = records[0]
-        if isinstance(first, dict):
-            tracking_data = first.get("tracking_data") or first
+    print(f"[ShipmentAgent/Graph] fetch_tracking — got {len(records)} record(s) for supplier_id={supplier_id!r}")
+    print(f"[ShipmentAgent/Graph] Raw tracking records:\n{json.dumps(records, indent=2)}")
+
+    # Extract tracking_data from raw records (shared utility — same as home-screen flow)
+    tracking_data = extract_tracking_data_from_records(records)
+
+    print(f"[ShipmentAgent/Graph] Extracted tracking_data keys: {list(tracking_data.keys()) if tracking_data else '(empty)'}")
 
     logger.info(
         "fetch_tracking — supplier=%s (%s), got %d record(s)",
@@ -293,40 +268,6 @@ async def _fetch_tracking_node(state: ShipmentGraphState) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _parse_datetime(raw: str | None) -> datetime | None:
-    """Best-effort parse of a datetime string."""
-    if not raw:
-        return None
-    # Strip trailing 'Z' (UTC marker) so strptime patterns work
-    cleaned = raw.strip().rstrip("Z")
-    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
-        try:
-            return datetime.strptime(cleaned, fmt)
-        except (ValueError, TypeError):
-            continue
-    return None
-
-
-def _max_checkpoint_gap_days(
-    checkpoints: list[dict[str, Any]],
-) -> int:
-    """Compute the largest gap (in days) between consecutive checkpoint arrivals."""
-    dates: list[datetime] = []
-    for cp in checkpoints:
-        dt = _parse_datetime(cp.get("actual_arrival"))
-        if dt:
-            dates.append(dt)
-    if len(dates) < 2:
-        return 0
-    dates.sort()
-    max_gap = 0
-    for i in range(1, len(dates)):
-        gap = (dates[i] - dates[i - 1]).days
-        if gap > max_gap:
-            max_gap = gap
-    return max_gap
-
-
 async def _build_metadata_node(state: ShipmentGraphState) -> dict[str, Any]:
     """Parse tracking data into structured tracking records.
 
@@ -335,81 +276,32 @@ async def _build_metadata_node(state: ShipmentGraphState) -> dict[str, Any]:
     Computes per-shipment metrics (delay, stagnation, velocity) that
     ``_heuristic_from_tracking`` can consume.
     """
+    print("\n[ShipmentAgent/Graph] ▶ build_metadata_node called")
     shipping_data = state.get("shipping_data") or {}
 
     # --- Supplier info ---
+    # OemScope does not have dedicated supplierCity/supplierCountry keys.
+    # build_oem_supplier_scope() merges the supplier's city/country/commodities
+    # into the top-level cities/countries/commodities lists, so we read from there.
+    scope = state.get("scope") or {}
+    scope_cities: list = scope.get("cities") or []
+    scope_countries: list = scope.get("countries") or []
+    scope_commodities: list = scope.get("commodities") or []
     supplier_data: dict[str, Any] = {
         "id": shipping_data.get("supplier_id") or "",
         "name": shipping_data.get("supplier_name") or "",
+        "location": (scope.get("locations") or [""])[0],
+        "city": scope_cities[0] if scope_cities else "",
+        "country": scope_countries[0] if scope_countries else "",
+        "commodities": scope_commodities,
     }
 
-    # --- Tracking data ---
+    # --- Tracking data (parsed via shared utility — same as home-screen flow) ---
     tracking_data = shipping_data.get("tracking_data") or {}
-    route_plan = tracking_data.get("route_plan") or []
-    shipment_meta = tracking_data.get("shipment_meta") or {}
+    tracking_records = parse_tracking_data_to_records(tracking_data)
 
-    tracking_records: list[dict[str, Any]] = []
-
-    if shipment_meta or route_plan:
-        # Origin / destination from shipment_meta
-        origin_info = shipment_meta.get("origin") or {}
-        dest_info = shipment_meta.get("destination") or {}
-        origin = origin_info.get("city") or ""
-        destination = dest_info.get("city") or ""
-        route = f"{origin} → {destination}" if origin and destination else "unknown"
-        current_status = shipment_meta.get("current_status") or "unknown"
-
-        pickup_date_dt = _parse_datetime(shipment_meta.get("pickup_date"))
-        etd_dt = _parse_datetime(shipment_meta.get("etd"))
-
-        # Sort checkpoints by sequence
-        sorted_checkpoints = sorted(
-            (cp for cp in route_plan if isinstance(cp, dict)),
-            key=lambda cp: cp.get("sequence", 0),
-        )
-
-        # Last actual arrival across all checkpoints
-        last_actual_dt: datetime | None = None
-        for cp in sorted_checkpoints:
-            dt = _parse_datetime(cp.get("actual_arrival"))
-            if dt and (last_actual_dt is None or dt > last_actual_dt):
-                last_actual_dt = dt
-
-        # Planned transit days (from shipment_meta or pickup → ETD)
-        planned_transit_days = shipment_meta.get("transit_days_estimated") or 0
-        if not planned_transit_days and pickup_date_dt and etd_dt:
-            planned_transit_days = max(1, (etd_dt - pickup_date_dt).days)
-
-        # Actual transit days (pickup → last checkpoint arrival)
-        actual_transit_days = planned_transit_days
-        if pickup_date_dt and last_actual_dt:
-            actual_transit_days = max(1, (last_actual_dt - pickup_date_dt).days)
-
-        # Delay: max days a checkpoint arrived past its planned_arrival
-        delay_days = 0
-        for cp in sorted_checkpoints:
-            planned = _parse_datetime(cp.get("planned_arrival"))
-            actual = _parse_datetime(cp.get("actual_arrival"))
-            if planned and actual and actual > planned:
-                d = (actual - planned).days
-                if d > delay_days:
-                    delay_days = d
-
-        # Stagnation: max gap between consecutive checkpoint arrivals
-        days_without_movement = _max_checkpoint_gap_days(sorted_checkpoints)
-
-        record: dict[str, Any] = {
-            "route": route,
-            "origin": origin,
-            "destination": destination,
-            "status": current_status,
-            "delayDays": delay_days,
-            "daysWithoutMovement": days_without_movement,
-            "plannedTransitDays": planned_transit_days,
-            "actualTransitDays": actual_transit_days,
-            "checkpoints": sorted_checkpoints,
-        }
-        tracking_records.append(record)
+    print(f"[ShipmentAgent/Graph] build_metadata — parsed {len(tracking_records)} shipment(s)")
+    print(f"[ShipmentAgent/Graph] Structured tracking_records:\n{json.dumps(tracking_records, indent=2, default=str)}")
 
     logger.info(
         "build_metadata — %d shipment(s) for supplier %s",
@@ -516,11 +408,15 @@ def _heuristic_from_tracking(
 
 async def _analyze_risk_node(state: ShipmentGraphState) -> dict[str, Any]:
     """Build LLM context from metadata and run risk analysis."""
+    print("\n[ShipmentAgent/Graph] ▶ analyze_risk_node called")
     scope = state.get("scope") or {}
     supplier_data = state.get("supplier_data") or {}
     tracking_records = state.get("tracking_records") or []
     oem_name = scope.get("oemName") or ""
     supplier_name = scope.get("supplierName") or ""
+
+    print(f"[ShipmentAgent/Graph]   Supplier : {json.dumps(supplier_data)}")
+    print(f"[ShipmentAgent/Graph]   Tracking records: {len(tracking_records)}")
 
     chain = _get_risk_chain()
     if not chain:
@@ -541,19 +437,22 @@ async def _analyze_risk_node(state: ShipmentGraphState) -> dict[str, Any]:
     model_name = getattr(llm, "model_name", None) or getattr(llm, "model", "unknown")
     call_id = _uuid.uuid4().hex[:8]
 
-    context = {
-        "oem": {
-            "id": scope.get("oemId"),
-            "name": scope.get("oemName"),
-            "locations": scope.get("locations"),
-            "commodities": scope.get("commodities"),
-        },
-        "supplier": supplier_data,
-        "tracking": tracking_records,
+    oem_context = {
+        "id": scope.get("oemId"),
+        "name": scope.get("oemName"),
+        "locations": scope.get("locations"),
+        "commodities": scope.get("commodities"),
     }
 
-    context_json = json.dumps({"context": context})
-    prompt_text = _RISK_SYSTEM_PROMPT + "\n" + context_json
+    # Build a human-readable narrative instead of raw JSON so the LLM
+    # can reason naturally about route progress, timing, and risk signals.
+    narrative = build_narrative_context(oem_context, supplier_data, tracking_records)
+    context_json = narrative  # sent as the user message
+    prompt_text = _RISK_SYSTEM_PROMPT + "\n\n" + narrative
+
+    print(f"\n[ShipmentAgent/Graph] LLM narrative context being sent:")
+    print(narrative)
+    print(f"\n[ShipmentAgent/Graph] Calling LLM — provider={getattr(get_chat_model(), 'model_provider', 'unknown')} model={getattr(get_chat_model(), 'model_name', None) or getattr(get_chat_model(), 'model', 'unknown')}")
 
     start = time.perf_counter()
     try:
@@ -591,8 +490,11 @@ async def _analyze_risk_node(state: ShipmentGraphState) -> dict[str, Any]:
             prompt_text, raw_text, "success", elapsed, None,
         )
 
+        print(f"\n[ShipmentAgent/Graph] LLM raw response:\n{raw_text}")
+
         parsed = _extract_json(raw_text) or {}
         score = parsed.get("shipping_risk_score")
+        print(f"\n[ShipmentAgent/Graph] LLM parsed result:\n{json.dumps(parsed, indent=2)}")
         logger.info(
             "LLM risk analysis completed — score=%s elapsed_ms=%d",
             score, elapsed,
@@ -628,6 +530,7 @@ async def _analyze_risk_node(state: ShipmentGraphState) -> dict[str, Any]:
 
 async def _normalize_result_node(state: ShipmentGraphState) -> dict[str, Any]:
     """Ensure all expected keys exist with safe defaults."""
+    print("\n[ShipmentAgent/Graph] ▶ normalize_result_node called")
     result = dict(state.get("shipping_risk_result") or {})
 
     result.setdefault("shipping_risk_score", 0.5)
@@ -644,6 +547,10 @@ async def _normalize_result_node(state: ShipmentGraphState) -> dict[str, Any]:
             "tracking_count": len(state.get("tracking_records") or []),
         },
     )
+
+    print(f"[ShipmentAgent/Graph] Normalized result:\n{json.dumps(result, indent=2)}")
+    print("\n[ShipmentAgent/Graph] ✓ Done — returning result to caller")
+    print("=" * 60 + "\n")
 
     scope = state.get("scope") or {}
     await _broadcast_progress(
