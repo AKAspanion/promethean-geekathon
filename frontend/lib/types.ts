@@ -19,13 +19,6 @@ export interface RiskSummary {
   suggested_actions: string[];
 }
 
-export interface ShipmentInput {
-  supplier_city: string;
-  oem_city: string;
-  shipment_start_date: string;
-  transit_days: number;
-}
-
 export interface DayWeatherSnapshot {
   date: string;
   day_number: number;
@@ -51,14 +44,45 @@ export interface DayRiskSnapshot {
   risk_summary_text: string;
 }
 
-export interface ShipmentWeatherExposureResponse {
-  supplier_city: string;
-  oem_city: string;
-  shipment_start_date: string;
-  transit_days: number;
-  days: DayRiskSnapshot[];
-  overall_exposure_level: RiskLevel;
-  overall_exposure_score: number;
-  risk_analysis_payload: Record<string, unknown>;
-  agent_summary?: string | null;
+/** New graph-based response shapes */
+
+export interface WeatherRisk {
+  title: string;
+  description: string;
+  severity: "low" | "medium" | "high" | "critical";
+  affectedRegion: string | null;
+  affectedSupplier: string | null;
+  estimatedImpact: string | null;
+  estimatedCost: number | null;
+  sourceType: string;
+  sourceData: {
+    weatherExposure?: {
+      weather_exposure_score?: number;
+      peak_risk_score?: number;
+      peak_risk_day?: number | null;
+      peak_risk_date?: string | null;
+      high_risk_day_count?: number;
+      route?: string;
+      day_number?: number;
+      date?: string;
+      location?: string;
+    };
+    risk_factors_max?: Record<string, number>;
+  };
+}
+
+export interface WeatherOpportunity {
+  title: string;
+  description: string;
+  type: string;
+  affectedRegion: string | null;
+  potentialBenefit: string | null;
+  estimatedValue: number | null;
+  sourceType: string;
+  sourceData: Record<string, unknown> | null;
+}
+
+export interface WeatherGraphResponse {
+  risks: WeatherRisk[];
+  opportunities: WeatherOpportunity[];
 }

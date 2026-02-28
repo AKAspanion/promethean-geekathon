@@ -1,56 +1,28 @@
 'use client';
 
 import { useState } from 'react';
-import {
-  RiskFactorsGrid,
-  ShipmentForm,
-  ShipmentTimeline,
-  ShipmentExposureSummary,
-} from '@/components/WeatherAgentComponents';
+import { ShipmentForm, ShipmentExposureSummary } from '@/components/WeatherAgentComponents';
 import { fetchShipmentWeatherExposure } from '@/lib/api';
-import type {
-  ShipmentInput,
-  ShipmentWeatherExposureResponse,
-} from '@/lib/types';
-
-const today = new Date().toISOString().split('T')[0];
+import type { WeatherGraphResponse } from '@/lib/types';
 
 export default function WeatherPage() {
-  const [shipmentInput, setShipmentInput] = useState<ShipmentInput>({
-    supplier_city: 'Chennai',
-    oem_city: 'Stuttgart',
-    shipment_start_date: today,
-    transit_days: 5,
-  });
-  const [shipmentLoading, setShipmentLoading] = useState(false);
-  const [shipmentError, setShipmentError] = useState<string | null>(null);
-  const [shipmentData, setShipmentData] = useState<ShipmentWeatherExposureResponse | null>(null);
-  const [payloadCopied, setPayloadCopied] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [data, setData] = useState<WeatherGraphResponse | null>(null);
 
-  async function handleShipmentSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setShipmentLoading(true);
-    setShipmentError(null);
-    setShipmentData(null);
-    setPayloadCopied(false);
+    setLoading(true);
+    setError(null);
+    setData(null);
     try {
-      const result = await fetchShipmentWeatherExposure(shipmentInput);
-      setShipmentData(result);
+      const result = await fetchShipmentWeatherExposure();
+      setData(result);
     } catch (err) {
-      setShipmentError(err instanceof Error ? err.message : 'Something went wrong.');
+      setError(err instanceof Error ? err.message : 'Something went wrong.');
     } finally {
-      setShipmentLoading(false);
+      setLoading(false);
     }
-  }
-
-  function handleCopyPayload() {
-    if (!shipmentData) return;
-    navigator.clipboard
-      .writeText(JSON.stringify(shipmentData.risk_analysis_payload, null, 2))
-      .then(() => {
-        setPayloadCopied(true);
-        setTimeout(() => setPayloadCopied(false), 2500);
-      });
   }
 
   return (
@@ -65,40 +37,19 @@ export default function WeatherPage() {
             Weather‑aware Supply Chain Risk
           </h2>
           <p className="max-w-xl text-[16px] leading-relaxed text-medium-gray dark:text-gray-400">
-            Analyze weather exposure across your shipment timeline from Supplier to OEM - day by day.
+            Analyze weather exposure across your shipment timeline from Supplier to OEM — risks and opportunities identified automatically.
           </p>
         </div>
       </aside>
+
       <div className="flex flex-1 flex-col gap-6">
-        <div className="flex flex-col gap-4 rounded-2xl border border-light-gray dark:border-gray-600 bg-white dark:bg-gray-800 p-5 shadow-sm">
-          <h3 className="text-[18px] font-semibold text-dark-gray dark:text-gray-200">Shipment Exposure</h3>
-          <ShipmentForm
-            input={shipmentInput}
-            onChange={setShipmentInput}
-            onSubmit={handleShipmentSubmit}
-            loading={shipmentLoading}
-            error={shipmentError}
-          />
-        </div>
-        {shipmentData && (
-          <>
-            <ShipmentExposureSummary
-              data={shipmentData}
-              onCopyPayload={handleCopyPayload}
-              payloadCopied={payloadCopied}
-            />
-            <ShipmentTimeline days={shipmentData.days} />
-            <RiskFactorsGrid
-              factors={
-                shipmentData.days.reduce<ShipmentWeatherExposureResponse['days'][0]>(
-                  (best, d) =>
-                    d.risk.overall_score > best.risk.overall_score ? d : best,
-                  shipmentData.days[0]
-                )?.risk.factors ?? []
-              }
-            />
-          </>
-        )}
+        <ShipmentForm
+          onSubmit={handleSubmit}
+          loading={loading}
+          error={error}
+        />
+
+        {data && <ShipmentExposureSummary data={data} />}
       </div>
     </main>
   );

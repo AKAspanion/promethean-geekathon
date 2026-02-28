@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { ShipmentInput, ShipmentWeatherExposureResponse } from "@/lib/types";
+import type { WeatherGraphResponse } from "@/lib/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -263,13 +263,9 @@ export const oemsApi = {
 };
 
 // Weather agent API (shipment weather exposure)
-export async function fetchShipmentWeatherExposure(
-  input: ShipmentInput
-): Promise<ShipmentWeatherExposureResponse> {
+export async function fetchShipmentWeatherExposure(): Promise<WeatherGraphResponse> {
   const res = await fetch(`${API_BASE_URL}/api/v1/shipment/weather-exposure`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => null);
