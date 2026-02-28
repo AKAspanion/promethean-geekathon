@@ -396,7 +396,7 @@ export function ShipmentTimeline({ days }: ShipmentTimelineProps) {
             <div
               key={d.day_number}
               onClick={() => setSelectedDay(d)}
-              className={`flex flex-col gap-2 rounded-xl border p-3 cursor-pointer transition-all duration-150 hover:shadow-md hover:scale-[1.02] active:scale-[0.99] ${colors.border} ${colors.bg} dark:border-gray-600 dark:bg-gray-800/60`}
+              className={`flex flex-col gap-2 rounded-xl border p-3 cursor-pointer transition-all duration-150 hover:shadow-md hover:scale-[1.02] active:scale-[0.99] ${colors.border} ${colors.bg}`}
             >
               {/* Top row: day number + origin/dest badges + weather icon */}
               <div className="flex items-center justify-between gap-1">

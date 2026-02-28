@@ -323,7 +323,7 @@ function DayRiskTimeline({ dayRisks }: { dayRisks: WeatherRisk[] }) {
             return (
               <div
                 key={i}
-                className={`min-w-[180px] flex-shrink-0 rounded-xl border ${colors.border} ${colors.bg} dark:border-gray-600 dark:bg-gray-700/40 p-3 space-y-2`}
+                className={`min-w-[180px] shrink-0 rounded-xl border ${colors.border} ${colors.bg} p-3 space-y-2`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div>

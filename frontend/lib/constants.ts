@@ -9,25 +9,25 @@ export const RISK_LEVEL_COLORS: Record<
   { bg: string; text: string; border: string }
 > = {
   low: {
-    bg: "bg-cyan-blue/15",
-    text: "text-primary-dark",
-    border: "border-cyan-blue/40",
+    bg: "bg-cyan-blue/15 dark:bg-cyan-900/40",
+    text: "text-primary-dark dark:text-cyan-200",
+    border: "border-cyan-blue/40 dark:border-cyan-700/60",
   },
   moderate: {
-    bg: "bg-primary-light/15",
-    text: "text-primary-dark",
-    border: "border-primary-light/40",
+    bg: "bg-primary-light/15 dark:bg-amber-900/30",
+    text: "text-primary-dark dark:text-amber-200",
+    border: "border-primary-light/40 dark:border-amber-700/50",
   },
   // Alias: some backend paths emit "medium" instead of "moderate"
   medium: {
-    bg: "bg-primary-light/15",
-    text: "text-primary-dark",
-    border: "border-primary-light/40",
+    bg: "bg-primary-light/15 dark:bg-amber-900/30",
+    text: "text-primary-dark dark:text-amber-200",
+    border: "border-primary-light/40 dark:border-amber-700/50",
   },
   high: {
-    bg: "bg-primary-dark/20",
-    text: "text-primary-dark",
-    border: "border-primary-dark/50",
+    bg: "bg-primary-dark/20 dark:bg-orange-900/40",
+    text: "text-primary-dark dark:text-orange-200",
+    border: "border-primary-dark/50 dark:border-orange-700/60",
   },
   critical: {
     bg: "bg-red-100 dark:bg-red-900/50",
