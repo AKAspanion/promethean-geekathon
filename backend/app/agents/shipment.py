@@ -182,7 +182,7 @@ async def _fetch_tracking_from_mock_server(
         return []
 
     url = (
-        f"{base_url.rstrip('/')}/mock/{SHIPMENT_TRACKING_COLLECTION}"
+        f"{base_url.rstrip('/')}/{SHIPMENT_TRACKING_COLLECTION}"
         f"?q=supplier_id:{supplier_id.strip()}"
     )
     logger.info("fetch_tracking — GET %s", url)
@@ -257,6 +257,7 @@ async def _fetch_tracking_node(state: ShipmentGraphState) -> dict[str, Any]:
 
     records = await _fetch_tracking_from_mock_server(supplier_id)
 
+
     # The mock server returns a list of tracking record dicts.  Use the first
     # record's tracking_data (Shiprocket format) if available.
     tracking_data: dict[str, Any] = {}
@@ -278,7 +279,9 @@ async def _fetch_tracking_node(state: ShipmentGraphState) -> dict[str, Any]:
         details={"records": len(records)},
         oem_name=oem_name, supplier_name=supplier_name,
     )
-
+    
+    print(f"\n[ShipmentAgent] Tracking records received from mock server:")
+    print(f"  {json.dumps(tracking_data, indent=2)}")
     return {
         "shipping_data": {
             "supplier_id": supplier_id,

@@ -32,7 +32,7 @@ async def get_tracking_by_supplier(supplier_id: str) -> dict:
         return {"items": []}
 
     url = (
-        f"{base_url.rstrip('/')}/mock/{MOCK_TRACKING_COLLECTION}"
+        f"{base_url.rstrip('/')}/{MOCK_TRACKING_COLLECTION}"
         f"?q=supplier_id:{supplier_id.strip()}"
     )
     try:
