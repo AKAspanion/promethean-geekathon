@@ -159,10 +159,23 @@ export interface Oem {
   location?: string | null;
   city?: string | null;
   country?: string | null;
+  countryCode?: string | null;
   region?: string | null;
+  commodities?: string | null;
   metadata?: Record<string, string> | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface OemUpdatePayload {
+  name?: string;
+  email?: string;
+  location?: string;
+  city?: string;
+  country?: string;
+  countryCode?: string;
+  region?: string;
+  commodities?: string;
 }
 
 export interface Supplier {
@@ -241,6 +254,12 @@ export const oemsApi = {
     api
       .post<{ oem: Oem; token: string }>("/oems/login", { email })
       .then((res) => res.data),
+  getProfile: () =>
+    api.get<Oem>("/oems/me").then((res) => res.data),
+  updateProfile: (data: OemUpdatePayload) =>
+    api.put<Oem>("/oems/me", data).then((res) => res.data),
+  deleteAccount: () =>
+    api.delete("/oems/me"),
 };
 
 // Weather agent API (from POC: city risk + shipment weather exposure)
