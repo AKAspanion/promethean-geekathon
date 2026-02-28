@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { agentApi, AgentStatus as AgentStatusType } from "@/lib/api";
 import { useStreamingText } from "@/hooks/useStreamingText";
-import { formatDistanceToNow } from "date-fns";
+import { safeFormatDistanceToNow } from "@/lib/format-date";
 import { CircularScore, getScoreTextClass } from "@/components/CircularScore";
 
 const statusColors: Record<string, string> = {
@@ -193,7 +193,7 @@ export function AgentStatus() {
           {status.lastUpdated && (
             <span className="text-xs text-medium-gray dark:text-gray-400 ml-1">
               &middot;{" "}
-              {formatDistanceToNow(new Date(status.lastUpdated), {
+              {safeFormatDistanceToNow(status.lastUpdated, {
                 addSuffix: true,
               })}
             </span>

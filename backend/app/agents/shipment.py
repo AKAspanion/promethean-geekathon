@@ -461,7 +461,7 @@ async def _analyze_risk_node(state: ShipmentGraphState) -> dict[str, Any]:
             call_id, provider, model_name, len(prompt_text),
         )
         await _broadcast_progress(
-            "llm_start", f"Running shipment risk analysis via {provider}",
+            "llm_start", f"Running shipment risk analysis",
             details={"call_id": call_id, "provider": provider, "model": str(model_name)},
             oem_name=oem_name, supplier_name=supplier_name,
         )

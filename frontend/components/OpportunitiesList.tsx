@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { opportunitiesApi, Opportunity } from '@/lib/api';
-import { formatDistanceToNow } from 'date-fns';
+import { safeFormatDistanceToNow } from '@/lib/format-date';
 
 const typeColors = {
   cost_saving: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400',
@@ -78,7 +78,7 @@ export function OpportunitiesList() {
               {opportunity.mitigationPlans && opportunity.mitigationPlans.length > 0 && (
                 <span>📋 {opportunity.mitigationPlans.length} plan(s)</span>
               )}
-              <span>{formatDistanceToNow(new Date(opportunity.createdAt), { addSuffix: true })}</span>
+              <span>{safeFormatDistanceToNow(opportunity.createdAt, { addSuffix: true })}</span>
             </div>
           </div>
         ))}

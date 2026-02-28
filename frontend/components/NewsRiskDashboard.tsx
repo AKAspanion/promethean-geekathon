@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { formatDistanceToNow } from "date-fns";
+import { safeFormatDistanceToNow } from "@/lib/format-date";
 import {
   risksApi,
   suppliersApi,
@@ -165,7 +165,7 @@ function NewsRiskCard({ risk }: { risk: Risk }) {
           </span>
         )}
         <span className="ml-auto text-medium-gray dark:text-gray-500 shrink-0">
-          {formatDistanceToNow(new Date(risk.createdAt), { addSuffix: true })}
+          {safeFormatDistanceToNow(risk.createdAt, { addSuffix: true })}
         </span>
       </div>
     </div>
@@ -387,7 +387,7 @@ function TrendInsightCard({ insight }: { insight: TrendInsightItem }) {
           </span>
         )}
         <span className="ml-auto text-medium-gray dark:text-gray-500 shrink-0">
-          {formatDistanceToNow(new Date(insight.createdAt), {
+          {safeFormatDistanceToNow(insight.createdAt, {
             addSuffix: true,
           })}
         </span>
@@ -792,7 +792,7 @@ export function NewsRiskDashboard() {
           </div>
           {oemScore.createdAt && (
             <p className="mt-2 text-[11px] text-medium-gray dark:text-gray-500">
-              Last updated {formatDistanceToNow(new Date(oemScore.createdAt), { addSuffix: true })}
+              Last updated {safeFormatDistanceToNow(oemScore.createdAt, { addSuffix: true })}
             </p>
           )}
         </section>

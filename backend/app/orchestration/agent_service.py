@@ -55,15 +55,18 @@ logger = logging.getLogger(__name__)
 SEVERITY_WEIGHT = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 
 # Domain weights let us emphasize certain risk sources in aggregation.
+# Weather weight reduced — only severe/direct weather events should significantly
+# affect the supplier score. Moderate weather along a route is normal.
 DOMAIN_WEIGHTS = {
-    "weather": 1.0,
+    "weather": 0.6,
     "shipping": 1.3,
     "news": 1.1,
 }
 
 # Controls the curvature of the non-linear escalation function:
 # score = 100 * (1 - exp(-base_weight / RISK_SCORE_CURVE_K))
-RISK_SCORE_CURVE_K = 12.0
+# Higher K = gentler curve, requires more weight to reach high scores.
+RISK_SCORE_CURVE_K = 18.0
 
 _is_running = False
 
@@ -383,9 +386,8 @@ def _compute_risk_score(risks: list) -> tuple[float, dict, dict]:
                 "weather_exposure_score"
             )
             if isinstance(exposure, (int, float)):
-                if exposure >= 80:
-                    pointer_boost = 1.4
-                elif exposure >= 60:
+                # Only boost for truly extreme weather
+                if exposure >= 85:
                     pointer_boost = 1.2
         elif src == "news":
             risk_type = (src_data or {}).get("risk_type")

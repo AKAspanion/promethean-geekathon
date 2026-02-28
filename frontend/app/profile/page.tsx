@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { oemsApi, type Oem, type OemUpdatePayload } from "@/lib/api";
 import { AppNav } from "@/components/AppNav";
 import { useAuth } from "@/lib/auth-context";
-import { formatDistanceToNow } from "date-fns";
+import { safeFormatDistanceToNow } from "@/lib/format-date";
 
 interface EditFormState {
   name: string;
@@ -356,7 +356,7 @@ export default function ProfilePage() {
                   </h2>
                   <p className="text-sm text-medium-gray dark:text-gray-400 mt-0.5">
                     Member since{" "}
-                    {formatDistanceToNow(new Date(profile.createdAt), {
+                    {safeFormatDistanceToNow(profile.createdAt, {
                       addSuffix: true,
                     })}
                   </p>

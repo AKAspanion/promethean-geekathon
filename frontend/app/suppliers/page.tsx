@@ -8,7 +8,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { suppliersApi, Supplier, SupplierSwarmSummary } from "@/lib/api";
 import { AppNav } from "@/components/AppNav";
 import { useAuth } from "@/lib/auth-context";
-import { formatDistanceToNow } from "date-fns";
+
 
 const severityBadgeClasses: Record<string, string> = {
   low: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",

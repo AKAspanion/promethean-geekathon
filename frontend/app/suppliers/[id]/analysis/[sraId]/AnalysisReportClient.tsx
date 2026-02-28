@@ -13,7 +13,7 @@ import {
   type TrackingActivity,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
-import { format } from "date-fns";
+import { formatDate } from "@/lib/format-date";
 import { ExposureOverview } from "@/components/ShipmentExposureSummary";
 import { ShipmentTimeline } from "@/components/ShipmentTimeline";
 import {
@@ -400,10 +400,10 @@ function NewsCombinedPanel({
                   </p>
                 ) : null}
                 <div className="flex flex-wrap gap-3 mt-1.5 text-[10px] text-medium-gray dark:text-gray-500">
-                  {item.publishedAt ? (
+                  {item?.publishedAt ? (
                     <span>
-                      {format(
-                        new Date(String(item.publishedAt)),
+                      {formatDate(
+                        String(item.publishedAt),
                         "MMM d, yyyy HH:mm",
                       )}
                     </span>
@@ -459,8 +459,8 @@ function NewsCombinedPanel({
                     ) : null}
                     {data.publishedAt ? (
                       <span>
-                        {format(
-                          new Date(String(data.publishedAt)),
+                        {formatDate(
+                          String(data.publishedAt),
                           "MMM d, yyyy HH:mm",
                         )}
                       </span>
@@ -721,7 +721,7 @@ export function AnalysisReportClient({
                     ? ` — Run #${report.workflowRun.runIndex}`
                     : null}
                   {report.workflowRun?.runDate
-                    ? ` — ${format(new Date(report.workflowRun.runDate), "MMM d, yyyy")}`
+                    ? ` — ${formatDate(report.workflowRun.runDate, "MMM d, yyyy")}`
                     : null}
                 </p>
               ) : null}

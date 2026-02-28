@@ -15,7 +15,7 @@ import {
 } from "@/lib/api";
 import { AppNav } from "@/components/AppNav";
 import { useAuth } from "@/lib/auth-context";
-import { formatDistanceToNow, format } from "date-fns";
+import { formatDate, safeFormatDistanceToNow } from "@/lib/format-date";
 import {
   ResponsiveContainer,
   LineChart,
@@ -438,12 +438,12 @@ function RiskScoreChart({ history }: { history: RiskHistoryEntry[] }) {
       label: h.workflowRun?.runIndex
         ? `Run #${h.workflowRun.runIndex}`
         : d
-          ? format(d, "MMM d")
+          ? formatDate(d, "MMM d")
           : "—",
       riskScore: h.riskScore,
       swarmScore: h.swarmSummary?.finalScore ?? null,
       risks: h.risksSummary.total,
-      date: d ? format(d, "MMM d, yyyy") : "",
+      date: d ? formatDate(d, "MMM d, yyyy", "") : "",
     };
   });
 
@@ -587,7 +587,7 @@ function RiskHistoryList({
                   )}
                   {d && (
                     <span className="text-xs text-medium-gray dark:text-gray-400">
-                      {format(d, "MMM d, yyyy")}
+                      {formatDate(d, "MMM d, yyyy")}
                     </span>
                   )}
                 </div>
@@ -681,7 +681,7 @@ function MetricsDashboard({ metrics }: { metrics: SupplierMetrics }) {
           )}
           {workflowRun.runDate && (
             <span className="text-xs text-medium-gray dark:text-gray-400">
-              {format(new Date(workflowRun.runDate), 'MMM d, yyyy')}
+              {formatDate(workflowRun.runDate, "MMM d, yyyy")}
             </span>
           )}
         </div>
@@ -1043,7 +1043,7 @@ function SupplierInfoCard({
           </h2>
           <p className="text-sm text-medium-gray dark:text-gray-400 mt-0.5">
             Added{" "}
-            {formatDistanceToNow(new Date(supplier.createdAt), {
+            {safeFormatDistanceToNow(supplier.createdAt, {
               addSuffix: true,
             })}
           </p>

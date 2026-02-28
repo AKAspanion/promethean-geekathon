@@ -11,6 +11,7 @@ import {
   type ShipmentMeta,
 } from "@/lib/api";
 import { useTheme } from "@/lib/theme-context";
+import { safeLocaleDateString } from "@/lib/format-date";
 
 export function riskLevelClass(level: string): string {
   const l = (level || "").toLowerCase();
@@ -265,19 +266,19 @@ export function TrackingTimelineView({
                   {act.actual_arrival && (
                     <span>
                       🕐 Arrived:{" "}
-                      {new Date(act.actual_arrival).toLocaleDateString()}
+                      {safeLocaleDateString(act.actual_arrival)}
                     </span>
                   )}
                   {act.departure_time && (
                     <span>
                       🚀 Departed:{" "}
-                      {new Date(act.departure_time).toLocaleDateString()}
+                      {safeLocaleDateString(act.departure_time)}
                     </span>
                   )}
                   {act.planned_arrival && (
                     <span>
                       📅 Planned:{" "}
-                      {new Date(act.planned_arrival).toLocaleDateString()}
+                      {safeLocaleDateString(act.planned_arrival)}
                     </span>
                   )}
                   {act.actual_arrival &&
@@ -671,13 +672,13 @@ export function ShippingRiskDashboard() {
               {shipmentMeta.pickup_date && (
                 <span>
                   <span className="font-medium">Pickup:</span>{" "}
-                  {new Date(shipmentMeta.pickup_date).toLocaleDateString()}
+                  {safeLocaleDateString(shipmentMeta.pickup_date)}
                 </span>
               )}
               {shipmentMeta.etd && (
                 <span>
                   <span className="font-medium">ETD:</span>{" "}
-                  {new Date(shipmentMeta.etd).toLocaleDateString()}
+                  {safeLocaleDateString(shipmentMeta.etd)}
                 </span>
               )}
               {shipmentMeta.transit_days_estimated != null && (
@@ -790,19 +791,19 @@ export function ShippingRiskDashboard() {
                         {act.actual_arrival && (
                           <span>
                             🕐 Arrived:{" "}
-                            {new Date(act.actual_arrival).toLocaleDateString()}
+                            {safeLocaleDateString(act.actual_arrival)}
                           </span>
                         )}
                         {act.departure_time && (
                           <span>
                             🚀 Departed:{" "}
-                            {new Date(act.departure_time).toLocaleDateString()}
+                            {safeLocaleDateString(act.departure_time)}
                           </span>
                         )}
                         {act.planned_arrival && (
                           <span>
                             📅 Planned:{" "}
-                            {new Date(act.planned_arrival).toLocaleDateString()}
+                            {safeLocaleDateString(act.planned_arrival)}
                           </span>
                         )}
                         {act.actual_arrival &&

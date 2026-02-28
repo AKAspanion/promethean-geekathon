@@ -211,12 +211,23 @@ risks for a supplier, provide an aggregated risk score from 0 to 100
 (decimals allowed). A score of 0 means no risk at all, and 100 means
 extremely critical risk requiring immediate action.
 
-Consider the following when scoring:
-- Number of risks detected
-- Severity distribution (critical, high, medium, low)
-- Types of risks (factory shutdown, bankruptcy, sanctions are more severe)
-- Geographic concentration of risks
-- Potential cascading effects
+CRITICAL SCORING GUIDELINES — be conservative and proportional:
+- Only risks that DIRECTLY and CONCRETELY affect this specific supplier's
+  operations should drive the score significantly.
+- Weather risks: moderate weather (wind 30-50 km/h, light rain, mild temperatures)
+  is NORMAL for supply chains and should contribute very little (0-15 points max).
+  Only severe weather (storms, blizzards, extreme heat >40C, visibility <1km) should
+  push weather contribution above 20 points.
+- News/geopolitical risks: only score highly if the risk DIRECTLY names or clearly
+  affects this supplier, its region, or its specific supply routes. Broad global
+  tensions with no direct link should be scored low (0-10 points contribution).
+- Shipping risks: weight most heavily as they represent actual measurable delays.
+- A score of 0-25 = LOW (normal operations, minor issues)
+- A score of 26-50 = MEDIUM (some disruptions requiring monitoring)
+- A score of 51-75 = HIGH (significant confirmed disruptions)
+- A score of 76-100 = CRITICAL (severe, confirmed, direct operational impact)
+- Most suppliers under normal conditions should score 0-30. Scores above 50 require
+  confirmed severe disruptions, not just multiple moderate weather observations.
 
 Supplier: {supplier_name}
 OEM: {oem_name}

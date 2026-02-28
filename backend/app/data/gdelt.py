@@ -54,7 +54,7 @@ class GDELTDataSource(BaseDataSource):
                                 "query": keyword,
                                 "mode": "artlist",
                                 "maxrecords": 10,
-                                "timespan": "4320",
+                                "timespan": "3days",
                                 "format": "json",
                             },
                             timeout=15.0,

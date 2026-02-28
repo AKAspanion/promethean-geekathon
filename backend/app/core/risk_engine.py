@@ -53,28 +53,28 @@ def _transportation_risk(current: dict[str, Any]) -> RiskFactor:
     score = 0.0
     reasons: list[str] = []
     if wind_kph > 50 or gust_kph > 70:
-        score += 45
+        score += 40
         reasons.append(f"High wind ({wind_kph:.0f} km/h, gusts {gust_kph:.0f}): truck speed reductions and possible route closures")
     elif wind_kph > 30 or gust_kph > 50:
-        score += 25
+        score += 12
         reasons.append(f"Moderate wind ({wind_kph:.0f} km/h) may slow road freight")
     if precip_mm > 10:
-        score += 30
+        score += 25
         reasons.append(f"Heavy precipitation ({precip_mm:.1f} mm): road delays and visibility issues")
     elif precip_mm > 2:
-        score += 15
+        score += 8
         reasons.append(f"Precipitation ({precip_mm:.1f} mm) may cause minor delays")
     if vis_km < 1:
-        score += 35
+        score += 30
         reasons.append(f"Very low visibility ({vis_km:.1f} km): unsafe for road transport")
     elif vis_km < 5:
-        score += 20
+        score += 10
         reasons.append(f"Reduced visibility ({vis_km:.1f} km) may slow logistics")
     if is_snow_ice:
-        score += 40
+        score += 35
         reasons.append("Snow/ice conditions: significant transport disruption risk")
     if is_fog and not is_snow_ice:
-        score += 25
+        score += 12
         reasons.append("Fog: reduced visibility hazard for all transport modes")
 
     score = _clamp_score(score)
@@ -123,19 +123,19 @@ def _power_outage_risk(current: dict[str, Any]) -> RiskFactor:
     score = 0.0
     reasons: list[str] = []
     if is_storm:
-        score += 50
+        score += 45
         reasons.append("Thunderstorms increase power outage and equipment damage risk")
     if is_heavy_winter:
-        score += 35
+        score += 30
         reasons.append("Heavy snow/blizzard: risk of power line damage and outages")
     if gust_kph > 60:
-        score += 35
+        score += 30
         reasons.append(f"Strong gusts ({gust_kph:.0f} km/h) can cause line damage and outages")
     elif wind_kph > 40:
-        score += 20
+        score += 10
         reasons.append(f"High wind ({wind_kph:.0f} km/h) may affect power infrastructure")
     if precip_mm > 15:
-        score += 15
+        score += 8
         reasons.append(f"Heavy rain ({precip_mm:.1f} mm) can cause local flooding and substation issues")
 
     score = _clamp_score(score)
@@ -176,22 +176,22 @@ def _production_risk(current: dict[str, Any]) -> RiskFactor:
     score = 0.0
     reasons: list[str] = []
     if feelslike_c >= 40:
-        score += 45
+        score += 40
         reasons.append("Extreme heat: worker safety and cooling load stress")
     elif feelslike_c >= 35:
-        score += 25
+        score += 15
         reasons.append("High heat may reduce productivity and require extra cooling")
     elif feelslike_c <= -15:
-        score += 40
+        score += 35
         reasons.append("Extreme cold: heating and workforce safety")
     elif feelslike_c <= -5:
-        score += 20
+        score += 12
         reasons.append("Cold conditions may affect outdoor work and logistics")
     if humidity >= 90 and temp_c > 25:
-        score += 20
+        score += 10
         reasons.append("High humidity with heat increases heat-stress risk")
     if uv_val >= 10:
-        score += 15
+        score += 8
         reasons.append("Very high UV: limit prolonged outdoor exposure")
 
     score = _clamp_score(score)
@@ -233,19 +233,19 @@ def _port_and_route_risk(current: dict[str, Any]) -> RiskFactor:
     score = 0.0
     reasons: list[str] = []
     if gust_kph > 80:
-        score += 55
+        score += 50
         reasons.append("Very high winds: port operations and flights likely disrupted")
     elif gust_kph > 55:
-        score += 35
+        score += 25
         reasons.append("Strong winds may delay port and airport operations")
     elif wind_kph > 40:
-        score += 20
+        score += 10
         reasons.append("Elevated wind may cause delays at ports and airports")
     if precip_mm > 20:
-        score += 25
+        score += 20
         reasons.append("Heavy precipitation can cause port/runway delays")
     if vis_km < 2:
-        score += 25
+        score += 20
         reasons.append("Low visibility impacts maritime and aviation operations")
     # Severe conditions that cause port/route closures: heavy rain, freezing rain,
     # sleet, snow, blizzard, ice pellets, thunderstorms with precipitation
@@ -292,7 +292,7 @@ def _port_and_route_risk(current: dict[str, Any]) -> RiskFactor:
 def _raw_material_delay_risk(current: dict[str, Any]) -> RiskFactor:
     trans = _transportation_risk(current)
     port = _port_and_route_risk(current)
-    combined = _clamp_score((trans.score + port.score) / 2.0 * 1.1)
+    combined = _clamp_score((trans.score + port.score) / 2.0)
     level = _level_from_score(combined)
     return RiskFactor(
         factor="raw_material_delay",
@@ -323,7 +323,9 @@ def compute_risk(current_weather: dict[str, Any]) -> dict[str, Any]:
         _raw_material_delay_risk(current),
     ]
     scores = [f.score for f in factors]
-    overall_score = min(100.0, (max(scores) * 0.5 + (sum(scores) / len(scores)) * 0.5))
+    # Weight max score heavily — only severe individual factors should drive overall score.
+    # Average of mild/moderate factors across categories should NOT inflate score.
+    overall_score = min(100.0, (max(scores) * 0.65 + (sum(scores) / len(scores)) * 0.35))
     overall_level = _level_from_score(overall_score)
     primary_concerns = [
         f.summary for f in factors if f.level in (RiskLevel.HIGH, RiskLevel.CRITICAL)

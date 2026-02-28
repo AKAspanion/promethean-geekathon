@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { mitigationPlansApi, MitigationPlan } from '@/lib/api';
-import { formatDistanceToNow } from 'date-fns';
+import { safeFormatDistanceToNow, safeLocaleDateString } from '@/lib/format-date';
 
 const statusColors = {
   draft: 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400',
@@ -81,9 +81,9 @@ export function MitigationPlansList() {
               {plan.opportunity && <span>✨ Opportunity: {plan.opportunity.title}</span>}
               {plan.assignedTo && <span>👤 {plan.assignedTo}</span>}
               {plan.dueDate && (
-                <span>📅 Due: {new Date(plan.dueDate).toLocaleDateString()}</span>
+                <span>📅 Due: {safeLocaleDateString(plan.dueDate)}</span>
               )}
-              <span>{formatDistanceToNow(new Date(plan.createdAt), { addSuffix: true })}</span>
+              <span>{safeFormatDistanceToNow(plan.createdAt, { addSuffix: true })}</span>
             </div>
           </div>
         ))}

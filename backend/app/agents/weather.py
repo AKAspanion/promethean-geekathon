@@ -937,12 +937,13 @@ async def _build_exposure_risks_node(state: WeatherState) -> WeatherState:
     risks: list[dict] = []
     opportunities: list[dict] = []
 
-    # Determine severity from exposure score
-    if exposure_score >= 75:
+    # Determine severity from exposure score — use higher thresholds so that
+    # moderate weather along a route does not inflate overall supplier risk.
+    if exposure_score >= 80:
         severity = "critical"
-    elif exposure_score >= 50:
+    elif exposure_score >= 60:
         severity = "high"
-    elif exposure_score >= 25:
+    elif exposure_score >= 35:
         severity = "moderate"
     else:
         severity = "low"
@@ -957,7 +958,7 @@ async def _build_exposure_risks_node(state: WeatherState) -> WeatherState:
         1 for d in (payload.get("daily_timeline") or []) if d.get("is_estimated")
     )
 
-    if exposure_score > 10:
+    if exposure_score > 25:
         concern_text = "; ".join(concerns[:3]) if concerns else "Weather exposure along transit route"
         action_text = "; ".join(actions[:3]) if actions else "Monitor weather conditions"
 
@@ -1008,13 +1009,14 @@ async def _build_exposure_risks_node(state: WeatherState) -> WeatherState:
             },
         })
 
-        # Add per-day risks for high/critical days with precise weather data
+        # Add per-day risks only for critical days to avoid inflating the score
+        # with many moderate weather entries that don't directly disrupt the supplier.
         for day_entry in (payload.get("daily_timeline") or []):
             day_score = day_entry.get("risk_score", 0)
             day_level = day_entry.get("risk_level", "low")
             if isinstance(day_level, RiskLevel):
                 day_level = day_level.value
-            if day_level in ("high", "critical"):
+            if day_level == "critical":
                 w = day_entry.get("weather", {})
                 day_sev = "critical" if day_score >= 75 else "high"
 
@@ -1130,7 +1132,7 @@ _SUMMARY_PROMPT = ChatPromptTemplate.from_messages([
             "the data is already rounded.\n"
             "2. Do NOT speculate, hypothesize, or add information not present in the data. "
             "No generic supply chain advice. No 'could potentially' language.\n"
-            "3. If overall_exposure_score < 25 AND high_risk_day_count is 0, state that "
+            "3. If overall_exposure_score < 35 AND high_risk_day_count is 0, state that "
             "conditions are favorable for transit — do NOT manufacture or imply risks.\n"
             "4. Mitigations MUST map to the specific risk factors that scored highest in "
             "risk_factors_max (transportation, port_and_route, power_outage, production, "
@@ -1140,10 +1142,10 @@ _SUMMARY_PROMPT = ChatPromptTemplate.from_messages([
             "6. If any day has is_estimated=true, explicitly note that those days use "
             "projected data beyond the 14-day forecast window and carry lower confidence.\n"
             "7. Severity language must match scores exactly:\n"
-            "   - Score <25: 'low risk' or 'favorable'\n"
-            "   - Score 25-49: 'moderate risk'\n"
-            "   - Score 50-74: 'high risk' — use urgent but measured language\n"
-            "   - Score >=75: 'critical risk' — flag for immediate operational attention\n"
+            "   - Score <35: 'low risk' or 'favorable'\n"
+            "   - Score 35-59: 'moderate risk'\n"
+            "   - Score 60-79: 'high risk' — use urgent but measured language\n"
+            "   - Score >=80: 'critical risk' — flag for immediate operational attention\n"
             "8. When transport_mode is available (sea, air, road, rail), tailor risk "
             "interpretation: sea freight is sensitive to wind/waves, air to visibility/storms, "
             "road to precipitation/ice, rail to extreme temperature.\n"
@@ -1231,7 +1233,7 @@ async def _llm_summary_node(state: WeatherState) -> WeatherState:
     try:
         await _broadcast_progress(
             "llm_summary_start",
-            f"Generating weather risk summary via {provider}",
+            f"Generating weather risk summary",
             {"provider": provider, "model": str(model_name)},
             oem_name=oem_name, supplier_name=supplier_name,
         )
@@ -1423,11 +1425,11 @@ async def run_weather_agent(
 
     exposure_score = summary_data.get("overall_exposure_score", 0.0)
 
-    if exposure_score >= 75:
+    if exposure_score >= 80:
         overall_level = RiskLevel.CRITICAL
-    elif exposure_score >= 50:
+    elif exposure_score >= 60:
         overall_level = RiskLevel.HIGH
-    elif exposure_score >= 25:
+    elif exposure_score >= 35:
         overall_level = RiskLevel.MODERATE
     else:
         overall_level = RiskLevel.LOW

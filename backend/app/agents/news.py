@@ -402,6 +402,20 @@ def _build_supplier_prompt(
                     "geopolitical_tension, regulatory_change, "
                     "infrastructure_failure, commodity_shortage, "
                     "cyber_incident.\n\n"
+                    "IMPORTANT SCORING RULES:\n"
+                    "- Only report risks that DIRECTLY affect this specific supplier's "
+                    "operations, facilities, workforce, or supply routes.\n"
+                    "- Do NOT inflate severity for indirect, speculative, or regional risks "
+                    "that have no confirmed direct link to the supplier.\n"
+                    "- 'critical' = confirmed shutdown, strike, sanctions, or imminent "
+                    "bankruptcy directly involving this supplier.\n"
+                    "- 'high' = confirmed disruption to the supplier's specific region, "
+                    "port, or supply route with clear operational impact.\n"
+                    "- 'medium' = potential disruption in the supplier's broader region "
+                    "that could plausibly affect operations.\n"
+                    "- 'low' = distant or tangential risks with no direct confirmed impact.\n"
+                    "- If news is vague or only loosely related, either skip it or rate "
+                    "it 'low'. Do NOT default to 'medium' or 'high' for uncertain risks.\n\n"
                     "Return ONLY valid JSON."
                 ),
             ),
@@ -461,8 +475,15 @@ def _build_global_prompt(
                     "You are a global supply chain News Agent. You "
                     "receive news about macro events (geopolitics, "
                     "trade, climate, logistics). Extract only "
-                    "material global supply chain risks that could "
-                    "affect the given OEM and supplier."
+                    "material global supply chain risks that DIRECTLY "
+                    "and CONCRETELY affect the given OEM and supplier.\n\n"
+                    "IMPORTANT: Be conservative with severity ratings. "
+                    "Global macro events should only be rated 'high' or 'critical' "
+                    "if they have a confirmed, direct impact on this specific "
+                    "supplier's operations or supply chain. Distant geopolitical "
+                    "tensions or broad economic trends with no direct link should "
+                    "be rated 'low'. If the connection to this supplier is speculative, "
+                    "either omit the risk or rate it 'low'."
                 ),
             ),
             (
