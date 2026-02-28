@@ -4,12 +4,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
 from app.agents.weather import run_weather_graph
 from app.api.deps import get_current_oem
 from app.config import settings
-from app.database import get_db
 from app.models.oem import Oem
 from app.schemas.weather_agent import HealthResponse
 from app.services.agent_types import OemScope
@@ -59,10 +57,19 @@ async def get_weather_exposure(
     }
 
     try:
-        return await run_weather_graph(scope)
+        result = await run_weather_graph(scope)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         raise HTTPException(
             status_code=502, detail=f"Shipment weather agent failed: {e}"
         )
+
+    # Surface a clear error if cities couldn't be resolved (supplier has no location data)
+    if not result.get("daily_timeline") and not result.get("risks") and not result.get("opportunities"):
+        raise HTTPException(
+            status_code=422,
+            detail="Could not resolve city for this supplier. Make sure the supplier has a city or location set.",
+        )
+
+    return result
