@@ -10,12 +10,22 @@ import {
   type SupplierUpdatePayload,
   type SupplierMetrics,
   type MetricsRisk,
-  type MetricsOpportunity,
   type SwarmAgentResult,
+  type RiskHistoryEntry,
 } from "@/lib/api";
 import { AppNav } from "@/components/AppNav";
 import { useAuth } from "@/lib/auth-context";
-import { formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow, format } from "date-fns";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+  ReferenceLine,
+} from "recharts";
 
 const severityBadgeClasses: Record<string, string> = {
   low: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",
@@ -307,34 +317,6 @@ function RiskCard({ risk }: { risk: MetricsRisk }) {
   );
 }
 
-function OpportunityCard({ opp }: { opp: MetricsOpportunity }) {
-  return (
-    <div className="border border-emerald-200 dark:border-emerald-800 rounded-lg p-4">
-      <div className="flex items-start justify-between gap-3 mb-2">
-        <h4 className="text-sm font-medium text-dark-gray dark:text-gray-200 leading-snug">
-          {opp.title}
-        </h4>
-        <span className="shrink-0 inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold uppercase bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
-          {opp.type.replace(/_/g, " ")}
-        </span>
-      </div>
-      <p className="text-xs text-medium-gray dark:text-gray-400 line-clamp-2 mb-2">
-        {opp.description}
-      </p>
-      <div className="flex flex-wrap gap-2 text-[10px] text-medium-gray dark:text-gray-500">
-        <span className="px-1.5 py-0.5 rounded bg-off-white dark:bg-gray-700">
-          {sourceTypeLabels[opp.sourceType] ?? opp.sourceType}
-        </span>
-        {opp.estimatedValue != null && (
-          <span className="px-1.5 py-0.5 rounded bg-off-white dark:bg-gray-700">
-            ${opp.estimatedValue.toLocaleString()}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function AgentBreakdownCard({ agent }: { agent: SwarmAgentResult }) {
   return (
     <div className="border border-light-gray dark:border-gray-700 rounded-lg p-4">
@@ -373,6 +355,203 @@ function AgentBreakdownCard({ agent }: { agent: SwarmAgentResult }) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Risk score history chart + list                                     */
+/* ------------------------------------------------------------------ */
+
+interface ChartDataPoint {
+  label: string;
+  riskScore: number;
+  swarmScore: number | null;
+  risks: number;
+  date: string;
+}
+
+function RiskScoreChart({ history }: { history: RiskHistoryEntry[] }) {
+  // Reverse so oldest is on the left
+  const data: ChartDataPoint[] = [...history].reverse().map((h) => {
+    const dateStr = h.workflowRun?.runDate ?? h.createdAt;
+    const d = dateStr ? new Date(dateStr) : null;
+    return {
+      label: h.workflowRun?.runIndex
+        ? `Run #${h.workflowRun.runIndex}`
+        : d
+          ? format(d, "MMM d")
+          : "—",
+      riskScore: h.riskScore,
+      swarmScore: h.swarmSummary?.finalScore ?? null,
+      risks: h.risksSummary.total,
+      date: d ? format(d, "MMM d, yyyy") : "",
+    };
+  });
+
+  if (data.length < 2) return null;
+
+  return (
+    <Card>
+      <SectionHeading>Risk Score Trend</SectionHeading>
+      <div className="h-64 mt-4">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart
+            data={data}
+            margin={{ top: 8, right: 16, left: -8, bottom: 0 }}
+          >
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke="var(--color-light-gray, #e5e7eb)"
+            />
+            <XAxis
+              dataKey="label"
+              tick={{ fontSize: 10 }}
+              stroke="#9ca3af"
+            />
+            <YAxis
+              domain={[0, 100]}
+              tick={{ fontSize: 10 }}
+              stroke="#9ca3af"
+            />
+            <Tooltip
+              contentStyle={{
+                fontSize: 12,
+                borderRadius: 8,
+                border: "1px solid #e5e7eb",
+              }}
+              formatter={(value: unknown, name: unknown) => [
+                typeof value === "number" ? value.toFixed(1) : String(value ?? ""),
+                name === "riskScore" ? "Risk Score" : "Swarm Score",
+              ]}
+              labelFormatter={(label, payload) => {
+                const point = payload?.[0]?.payload as ChartDataPoint | undefined;
+                return point?.date ? `${String(label)} — ${point.date}` : String(label);
+              }}
+            />
+            {/* Threshold lines */}
+            <ReferenceLine y={25} stroke="#22c55e" strokeDasharray="4 4" strokeOpacity={0.5} />
+            <ReferenceLine y={50} stroke="#eab308" strokeDasharray="4 4" strokeOpacity={0.5} />
+            <ReferenceLine y={75} stroke="#f97316" strokeDasharray="4 4" strokeOpacity={0.5} />
+            <Line
+              type="monotone"
+              dataKey="riskScore"
+              stroke="#7c3aed"
+              strokeWidth={2}
+              dot={{ r: 4, fill: "#7c3aed" }}
+              activeDot={{ r: 6 }}
+              name="riskScore"
+            />
+            <Line
+              type="monotone"
+              dataKey="swarmScore"
+              stroke="#0ea5e9"
+              strokeWidth={2}
+              strokeDasharray="5 5"
+              dot={{ r: 3, fill: "#0ea5e9" }}
+              name="swarmScore"
+              connectNulls
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="flex items-center gap-4 mt-3 text-[10px] text-medium-gray dark:text-gray-500">
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block w-3 h-0.5 bg-violet-600 rounded" /> Risk Score
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block w-3 h-0.5 bg-sky-500 rounded border-dashed" style={{ borderBottom: "1px dashed #0ea5e9", height: 0, width: 12 }} /> Swarm Score
+        </span>
+        <span className="ml-auto flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-green-500" /> &le;25
+          <span className="w-2 h-2 rounded-full bg-yellow-500" /> &le;50
+          <span className="w-2 h-2 rounded-full bg-orange-500" /> &le;75
+          <span className="w-2 h-2 rounded-full bg-red-500" /> &gt;75
+        </span>
+      </div>
+    </Card>
+  );
+}
+
+function RiskHistoryList({ history }: { history: RiskHistoryEntry[] }) {
+  if (history.length === 0) return null;
+
+  return (
+    <Card>
+      <SectionHeading>Analysis History ({history.length})</SectionHeading>
+      <div className="mt-4 space-y-3">
+        {history.map((h, idx) => {
+          const dateStr = h.workflowRun?.runDate ?? h.createdAt;
+          const d = dateStr ? new Date(dateStr) : null;
+          const level = h.swarmSummary?.riskLevel;
+
+          return (
+            <div
+              key={h.id}
+              className={`border rounded-lg p-4 transition-colors ${idx === 0 ? "border-violet-200 dark:border-violet-800 bg-violet-50/30 dark:bg-violet-900/10" : "border-light-gray dark:border-gray-700"}`}
+            >
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  {idx === 0 && (
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400">
+                      Latest
+                    </span>
+                  )}
+                  {h.workflowRun?.runIndex != null && (
+                    <span className="text-xs font-medium text-dark-gray dark:text-gray-200">
+                      Run #{h.workflowRun.runIndex}
+                    </span>
+                  )}
+                  {d && (
+                    <span className="text-xs text-medium-gray dark:text-gray-400">
+                      {format(d, "MMM d, yyyy")}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {level && (
+                    <span
+                      className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold ${swarmLevelBadgeClasses[level] ?? "bg-light-gray/50 text-dark-gray"}`}
+                    >
+                      {level}
+                    </span>
+                  )}
+                  <span className="text-sm font-semibold text-dark-gray dark:text-gray-200">
+                    {h.riskScore.toFixed(1)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-3 text-[10px] text-medium-gray dark:text-gray-500">
+                <span>
+                  {h.risksSummary.total} risk{h.risksSummary.total !== 1 ? "s" : ""}
+                </span>
+                {Object.entries(h.risksSummary.bySeverity)
+                  .filter(([, n]) => n > 0)
+                  .map(([sev, count]) => (
+                    <span
+                      key={sev}
+                      className={`px-1.5 py-0.5 rounded ${severityBadgeClasses[sev] ?? "bg-light-gray/50 text-dark-gray"}`}
+                    >
+                      {sev}: {count}
+                    </span>
+                  ))}
+                {h.opportunitiesCount > 0 && (
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
+                    {h.opportunitiesCount} opp{h.opportunitiesCount !== 1 ? "s" : ""}
+                  </span>
+                )}
+              </div>
+
+              {h.description && (
+                <p className="text-xs text-medium-gray dark:text-gray-400 mt-2 line-clamp-2">
+                  {h.description}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Metrics dashboard section                                           */
 /* ------------------------------------------------------------------ */
 
@@ -382,9 +561,7 @@ function MetricsDashboard({ metrics }: { metrics: SupplierMetrics }) {
     riskAnalysis,
     risks,
     risksSummary,
-    opportunities,
     swarmAnalysis,
-    supplyChainScore,
     mitigationPlans,
   } = metrics;
 
@@ -616,6 +793,12 @@ export function SupplierDetailClient({ id }: { id: string }) {
     enabled: hydrated && isLoggedIn === true,
   });
 
+  const { data: history } = useQuery({
+    queryKey: ["supplier-history", id],
+    queryFn: () => suppliersApi.getHistory(id),
+    enabled: hydrated && isLoggedIn === true,
+  });
+
   const updateMutation = useMutation({
     mutationFn: (data: SupplierUpdatePayload) => suppliersApi.update(id, data),
     onSuccess: (updated) => {
@@ -638,7 +821,7 @@ export function SupplierDetailClient({ id }: { id: string }) {
   return (
     <div className="min-h-screen bg-off-white dark:bg-gray-900">
       <header className="bg-white dark:bg-gray-800 shadow-sm border-b border-light-gray dark:border-gray-700">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <Link
@@ -670,7 +853,7 @@ export function SupplierDetailClient({ id }: { id: string }) {
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {isLoading ? (
           <div className="animate-pulse space-y-4">
             {[1, 2, 3].map((i) => (
@@ -818,6 +1001,14 @@ export function SupplierDetailClient({ id }: { id: string }) {
                 ) : metrics ? (
                   <MetricsDashboard metrics={metrics} />
                 ) : null}
+
+                {/* Risk Score Chart & History */}
+                {history && history.length > 0 && (
+                  <>
+                    <RiskScoreChart history={history} />
+                    <RiskHistoryList history={history} />
+                  </>
+                )}
               </>
             )}
           </div>

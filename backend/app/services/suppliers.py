@@ -645,3 +645,106 @@ def get_supplier_metrics(
         } if supply_chain_score else None,
         "mitigationPlans": [_serialize_mitigation_plan(mp) for mp in mitigation_plans],
     }
+
+
+def get_supplier_risk_history(
+    db: Session, supplier_id: UUID, oem_id: UUID, limit: int = 20
+) -> List[Dict[str, Any]]:
+    """
+    Return historical risk analysis runs for a supplier, ordered newest-first.
+
+    Each entry contains the SupplierRiskAnalysis data, workflow run info,
+    risk/opportunity counts, and swarm summary for that run.
+    """
+    sra_rows = (
+        db.query(SupplierRiskAnalysis)
+        .filter(
+            SupplierRiskAnalysis.supplierId == supplier_id,
+            SupplierRiskAnalysis.oemId == oem_id,
+        )
+        .order_by(SupplierRiskAnalysis.createdAt.desc())
+        .limit(limit)
+        .all()
+    )
+    if not sra_rows:
+        return []
+
+    # Collect all workflow run IDs and SRA IDs for batch queries
+    wf_ids = [sra.workflowRunId for sra in sra_rows if sra.workflowRunId]
+    sra_ids = [sra.id for sra in sra_rows]
+
+    # Batch-load workflow runs
+    wf_map: Dict[Any, WorkflowRun] = {}
+    if wf_ids:
+        for wf in db.query(WorkflowRun).filter(WorkflowRun.id.in_(wf_ids)).all():
+            wf_map[wf.id] = wf
+
+    # Batch-load swarm analyses by SRA id
+    swarm_map: Dict[Any, SwarmAnalysis] = {}
+    if sra_ids:
+        for sa in db.query(SwarmAnalysis).filter(SwarmAnalysis.supplierRiskAnalysisId.in_(sra_ids)).all():
+            swarm_map[sa.supplierRiskAnalysisId] = sa
+
+    # Batch-load risk counts per workflow run for this supplier
+    from sqlalchemy import func as sa_func
+
+    risk_counts: Dict[Any, Dict[str, int]] = {}
+    opp_counts: Dict[Any, int] = {}
+    if wf_ids:
+        risk_rows = (
+            db.query(Risk.workflowRunId, Risk.severity, sa_func.count(Risk.id))
+            .filter(
+                Risk.workflowRunId.in_(wf_ids),
+                Risk.supplierId == supplier_id,
+            )
+            .group_by(Risk.workflowRunId, Risk.severity)
+            .all()
+        )
+        for wf_id, severity, cnt in risk_rows:
+            if wf_id not in risk_counts:
+                risk_counts[wf_id] = {}
+            sev = str(getattr(severity, "value", severity))
+            risk_counts[wf_id][sev] = cnt
+
+        opp_rows = (
+            db.query(Opportunity.workflowRunId, sa_func.count(Opportunity.id))
+            .filter(
+                Opportunity.workflowRunId.in_(wf_ids),
+                Opportunity.supplierId == supplier_id,
+            )
+            .group_by(Opportunity.workflowRunId)
+            .all()
+        )
+        for wf_id, cnt in opp_rows:
+            opp_counts[wf_id] = cnt
+
+    history = []
+    for sra in sra_rows:
+        wf = wf_map.get(sra.workflowRunId)
+        swarm = swarm_map.get(sra.id)
+        sev_counts = risk_counts.get(sra.workflowRunId, {})
+        total_risks = sum(sev_counts.values())
+
+        entry: Dict[str, Any] = {
+            "id": str(sra.id),
+            "workflowRunId": str(sra.workflowRunId) if sra.workflowRunId else None,
+            "riskScore": float(sra.riskScore) if sra.riskScore is not None else 0,
+            "description": sra.description,
+            "createdAt": sra.createdAt.isoformat() if sra.createdAt else None,
+            "workflowRun": {
+                "runDate": wf.runDate.isoformat() if wf and wf.runDate else None,
+                "runIndex": wf.runIndex if wf else None,
+            } if wf else None,
+            "risksSummary": {
+                "total": total_risks,
+                "bySeverity": sev_counts,
+            },
+            "opportunitiesCount": opp_counts.get(sra.workflowRunId, 0),
+            "swarmSummary": {
+                "finalScore": float(swarm.finalScore) if swarm and swarm.finalScore is not None else None,
+                "riskLevel": swarm.riskLevel if swarm else None,
+            } if swarm else None,
+        }
+        history.append(entry)
+
+    return history

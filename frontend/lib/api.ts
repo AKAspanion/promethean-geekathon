@@ -462,6 +462,28 @@ export interface SupplierMetrics {
   mitigationPlans: MetricsMitigationPlan[];
 }
 
+// Supplier Risk Analysis History
+export interface RiskHistoryEntry {
+  id: string;
+  workflowRunId: string | null;
+  riskScore: number;
+  description: string | null;
+  createdAt: string | null;
+  workflowRun: {
+    runDate: string | null;
+    runIndex: number | null;
+  } | null;
+  risksSummary: {
+    total: number;
+    bySeverity: Record<string, number>;
+  };
+  opportunitiesCount: number;
+  swarmSummary: {
+    finalScore: number | null;
+    riskLevel: string | null;
+  } | null;
+}
+
 export const suppliersApi = {
   uploadCsv: (file: File) => {
     const formData = new FormData();
@@ -480,7 +502,15 @@ export const suppliersApi = {
   getById: (id: string) =>
     api.get<Supplier | null>(`/suppliers/${id}`).then((res) => res.data),
   getMetrics: (id: string) =>
-    api.get<SupplierMetrics>(`/suppliers/${id}/metrics`).then((res) => res.data),
+    api
+      .get<SupplierMetrics>(`/suppliers/${id}/metrics`)
+      .then((res) => res.data),
+  getHistory: (id: string, limit = 20) =>
+    api
+      .get<RiskHistoryEntry[]>(`/suppliers/${id}/history`, {
+        params: { limit },
+      })
+      .then((res) => res.data),
   update: (id: string, data: SupplierUpdatePayload) =>
     api.put<Supplier>(`/suppliers/${id}`, data).then((res) => res.data),
   delete: (id: string) => api.delete(`/suppliers/${id}`),
