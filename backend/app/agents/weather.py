@@ -901,7 +901,7 @@ async def _build_exposure_risks_node(state: WeatherState) -> WeatherState:
     elif exposure_score >= 50:
         severity = "high"
     elif exposure_score >= 25:
-        severity = "medium"
+        severity = "moderate"
     else:
         severity = "low"
 

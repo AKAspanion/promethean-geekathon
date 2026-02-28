@@ -18,6 +18,12 @@ export const RISK_LEVEL_COLORS: Record<
     text: "text-primary-dark",
     border: "border-primary-light/40",
   },
+  // Alias: some backend paths emit "medium" instead of "moderate"
+  medium: {
+    bg: "bg-primary-light/15",
+    text: "text-primary-dark",
+    border: "border-primary-light/40",
+  },
   high: {
     bg: "bg-primary-dark/20",
     text: "text-primary-dark",
@@ -33,6 +39,7 @@ export const RISK_LEVEL_COLORS: Record<
 export const RISK_LEVEL_BAR_COLORS: Record<string, string> = {
   low: "bg-cyan-blue",
   moderate: "bg-primary-light",
+  medium: "bg-primary-light",  // alias for moderate
   high: "bg-primary-dark",
   critical: "bg-primary-dark",
 };

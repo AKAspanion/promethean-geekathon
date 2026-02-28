@@ -10,6 +10,30 @@ const RISK_DOT: Record<RiskLevel, string> = {
   critical: "bg-red-600",
 };
 
+type DataSourceType = "historical" | "current" | "forecast";
+
+function getDataSource(date: string, isHistorical: boolean): DataSourceType {
+  if (isHistorical) return "historical";
+  const today = new Date().toISOString().slice(0, 10);
+  if (date === today) return "current";
+  return "forecast";
+}
+
+const DATA_SOURCE_STYLES: Record<DataSourceType, { label: string; className: string }> = {
+  historical: {
+    label: "Historical",
+    className: "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/50",
+  },
+  current: {
+    label: "Live",
+    className: "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/50",
+  },
+  forecast: {
+    label: "Forecast",
+    className: "bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400 border border-violet-200 dark:border-violet-800/50",
+  },
+};
+
 function WeatherIcon({ condition }: { condition: string }) {
   const c = condition.toLowerCase();
   if (c.includes("thunder") || c.includes("storm")) return <span title={condition}>⛈️</span>;
@@ -61,6 +85,8 @@ export function ShipmentTimeline({ days }: ShipmentTimelineProps) {
           const isOrigin = /\(origin\)/i.test(d.location_name);
           const isDest = /\(destination\)/i.test(d.location_name);
           const cityName = d.weather.estimated_location;
+          const dataSource = getDataSource(d.date, d.weather.is_historical);
+          const ds = DATA_SOURCE_STYLES[dataSource];
 
           // Derive a short leg label from location_name
           const legLabel = d.location_name
@@ -75,7 +101,7 @@ export function ShipmentTimeline({ days }: ShipmentTimelineProps) {
               key={d.day_number}
               className={`flex flex-col gap-2 rounded-xl border p-3 ${colors.border} ${colors.bg} dark:border-gray-600 dark:bg-gray-800/60`}
             >
-              {/* Top row: day + icon */}
+              {/* Top row: day number + origin/dest badges + weather icon */}
               <div className="flex items-center justify-between gap-1">
                 <div className="flex items-center gap-1 flex-wrap">
                   <span className="text-[12px] font-bold text-dark-gray dark:text-gray-100">
@@ -95,7 +121,7 @@ export function ShipmentTimeline({ days }: ShipmentTimelineProps) {
                 <WeatherIcon condition={d.weather.condition} />
               </div>
 
-              {/* City + leg label */}
+              {/* City + leg label + date */}
               <div>
                 <p className="text-[13px] font-bold leading-tight text-dark-gray dark:text-gray-100 truncate">
                   {cityName}
@@ -107,11 +133,15 @@ export function ShipmentTimeline({ days }: ShipmentTimelineProps) {
                 )}
                 <p className="text-[10px] text-medium-gray dark:text-gray-500 mt-0.5">
                   {d.date}
-                  {d.weather.is_historical && (
-                    <span className="ml-1 text-[9px] opacity-70">hist</span>
-                  )}
                 </p>
               </div>
+
+              {/* Data source badge */}
+              <span
+                className={`self-start rounded-full px-2 py-px text-[9px] font-bold uppercase tracking-wide ${ds.className}`}
+              >
+                {ds.label}
+              </span>
 
               {/* Key stats */}
               <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px]">
