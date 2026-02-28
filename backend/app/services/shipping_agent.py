@@ -165,11 +165,9 @@ def analyze_shipments_for_supplier(
     )
 
     llm_content = response.choices[0].message.content or "{}"
-    print(f"\n[ShipmentAgent] LLM raw response:\n{llm_content}")
 
     try:
         data = json.loads(llm_content)
-        print(f"\n[ShipmentAgent] LLM parsed result:\n{json.dumps(data, indent=2)}")
     except json.JSONDecodeError:
         print("[ShipmentAgent] LLM response was not valid JSON — using fallback")
         data = dict(SHIPMENT_FALLBACK_RESULT)

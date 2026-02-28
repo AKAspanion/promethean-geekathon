@@ -1361,7 +1361,7 @@ async def run_weather_graph(
         oem_resolved, supplier_resolved, len(risks), len(opps), len(daily_timeline),
     )
     await _broadcast_progress(
-        "completed",
+        "agent_done",
         f"Weather analysis complete: {len(risks)} risks, {len(opps)} opportunities, {len(daily_timeline)} days",
         {"risks": len(risks), "opportunities": len(opps), "daily_days": len(daily_timeline)},
         oem_name=oem_resolved, supplier_name=supplier_resolved,

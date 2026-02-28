@@ -461,7 +461,7 @@ async def _analyze_risk_node(state: ShipmentGraphState) -> dict[str, Any]:
             call_id, provider, model_name, len(prompt_text),
         )
         await _broadcast_progress(
-            "llm_start", f"Running shipment risk analysis",
+            "llm_start", f"Running shipment risk analysis via {provider}",
             details={"call_id": call_id, "provider": provider, "model": str(model_name)},
             oem_name=oem_name, supplier_name=supplier_name,
         )
@@ -494,7 +494,6 @@ async def _analyze_risk_node(state: ShipmentGraphState) -> dict[str, Any]:
 
         parsed = _extract_json(raw_text) or {}
         score = parsed.get("shipping_risk_score")
-        print(f"\n[ShipmentAgent/Graph] LLM parsed result:\n{json.dumps(parsed, indent=2)}")
         logger.info(
             "LLM risk analysis completed — score=%s elapsed_ms=%d",
             score, elapsed,
@@ -554,7 +553,7 @@ async def _normalize_result_node(state: ShipmentGraphState) -> dict[str, Any]:
 
     scope = state.get("scope") or {}
     await _broadcast_progress(
-        "completed",
+        "agent_done",
         f"Shipment risk analysis complete — level: {result.get('risk_level', 'Medium')}",
         details={
             "risk_level": result.get("risk_level"),
