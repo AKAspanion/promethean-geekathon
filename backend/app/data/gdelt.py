@@ -37,6 +37,7 @@ class GDELTDataSource(BaseDataSource):
 
     async def fetch_data(self, params: dict | None = None) -> list[DataSourceResult]:
         keywords = (params or {}).get("keywords") or _DEFAULT_KEYWORDS
+        logger.info("GDELT: fetching news for keywords: %s", keywords)
         results: list[DataSourceResult] = []
 
         try:
@@ -73,24 +74,33 @@ class GDELTDataSource(BaseDataSource):
                 all_articles = await asyncio.gather(
                     *[_fetch_keyword(kw) for kw in keywords[:5]]
                 )
-                for articles in all_articles:
+                for keyword, articles in zip(keywords[:5], all_articles):
                     for article in articles:
                         title = (article.get("title") or "").strip()
                         if not title:
                             continue
+                        # GDELT API doesn't return a description/snippet,
+                        # so synthesize one from available metadata to give
+                        # downstream LLM agents useful context.
+                        country = article.get("sourcecountry") or "Unknown region"
+                        domain = article.get("domain") or "unknown source"
+                        description = (
+                            f"{title}. Reported by {domain} ({country}), "
+                            f"matched on supply-chain keyword \"{keyword}\"."
+                        )
                         results.append(
                             self._create_result(
                                 {
                                     "title": title,
-                                    "description": None,
+                                    "description": description,
                                     "url": article.get("url"),
-                                    "source": article.get("domain"),
+                                    "source": domain,
                                     "publishedAt": article.get("seendate"),
                                     "author": None,
                                     "content": None,
                                 },
                                 metadata={
-                                    "sourcecountry": article.get("sourcecountry"),
+                                    "sourcecountry": country,
                                     "language": article.get("language"),
                                     "source_provider": "gdelt",
                                 },

@@ -80,6 +80,7 @@ class NewsDataSource(BaseDataSource):
                             )
             except Exception as e:
                 logger.exception("Error fetching news: %s", e)
+
         if not results:
             for article in [
                 {
@@ -100,4 +101,5 @@ class NewsDataSource(BaseDataSource):
                 },
             ]:
                 results.append(self._create_result(article))
+
         return results

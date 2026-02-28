@@ -27,6 +27,7 @@ from typing import TypedDict
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, START, StateGraph
 
+from app.data.gdelt import GDELTDataSource
 from app.data.trends import TrendDataSource
 from app.services.agent_orchestrator import _extract_json
 from app.services.langchain_llm import get_chat_model
@@ -54,6 +55,7 @@ class TrendAgentState(TypedDict, total=False):
     material_raw: list[dict]
     supplier_raw: list[dict]
     global_raw: list[dict]
+    gdelt_raw: list[dict]
 
     # Merged + deduplicated trend items
     trend_items: list[dict]
@@ -137,6 +139,48 @@ async def _fetch_global_node(state: TrendAgentState) -> TrendAgentState:
     return {"global_raw": raw}
 
 
+def _build_gdelt_keywords(
+    suppliers: list[dict], materials: list[dict]
+) -> list[str]:
+    keywords = [
+        "supply chain disruption",
+        "trade sanctions",
+        "port strike",
+        "factory shutdown",
+        "natural disaster manufacturing",
+    ]
+    for s in suppliers[:3]:
+        name = (s.get("name") or "").strip()
+        country = (s.get("country") or s.get("region") or "").strip()
+        if name:
+            keywords.append(f"{name} disruption")
+        if country:
+            keywords.append(f"sanctions {country}")
+    for m in materials[:3]:
+        name = (m.get("material_name") or "").strip()
+        if name:
+            keywords.append(f"{name} shortage")
+    return list(dict.fromkeys(keywords))[:10]
+
+
+async def _fetch_gdelt_node(state: TrendAgentState) -> TrendAgentState:
+    """Fetch geopolitical event articles from GDELT for trend context."""
+    suppliers = state.get("suppliers") or []
+    materials = state.get("materials") or []
+    keywords = _build_gdelt_keywords(suppliers, materials)
+    logger.info("fetch_gdelt (trend): %d keywords", len(keywords))
+    try:
+        source = GDELTDataSource()
+        await source.initialize({})
+        results = await source.fetch_data({"keywords": keywords})
+        raw = [r.to_dict() for r in results]
+        logger.info("fetch_gdelt (trend): %d articles", len(raw))
+        return {"gdelt_raw": raw}
+    except Exception as exc:
+        logger.exception("fetch_gdelt (trend) error: %s", exc)
+        return {"gdelt_raw": []}
+
+
 async def _fetch_scope(queries: list[str], level: str) -> list[dict]:
     if not queries:
         return []
@@ -160,7 +204,7 @@ async def _fetch_scope(queries: list[str], level: str) -> list[dict]:
 def _merge_trend_node(state: TrendAgentState) -> TrendAgentState:
     """Combine all three fetch results and deduplicate by normalised title."""
     combined: list[dict] = []
-    for key in ("material_raw", "supplier_raw", "global_raw"):
+    for key in ("material_raw", "supplier_raw", "global_raw", "gdelt_raw"):
         combined.extend(state.get(key) or [])  # type: ignore[arg-type]
 
     seen: set[str] = set()
@@ -228,6 +272,10 @@ def _get_insight_prompt() -> ChatPromptTemplate:
                         "OEM's supplier and material context. "
                         "Your task is to generate structured trend insights "
                         "covering three scopes: material, supplier, and global.\n\n"
+                        "IMPORTANT: Source articles may be in any language. "
+                        "Always return all fields (title, description, "
+                        "predicted_impact, recommended_actions, etc.) "
+                        "in English, regardless of the source language.\n\n"
                         "For EACH insight return:\n"
                         "  scope          — 'material' | 'supplier' | 'global'\n"
                         "  entity_name    — material name, supplier name, or 'Global'\n"
@@ -327,6 +375,7 @@ _builder.add_node("build_queries",      _build_queries_node)
 _builder.add_node("fetch_material",     _fetch_material_node)
 _builder.add_node("fetch_supplier",     _fetch_supplier_node)
 _builder.add_node("fetch_global",       _fetch_global_node)
+_builder.add_node("fetch_gdelt",        _fetch_gdelt_node)
 _builder.add_node("merge_trend",        _merge_trend_node)
 _builder.add_node("build_trend_items",  _build_trend_items_node)
 _builder.add_node("trend_insight_llm",  _trend_insight_llm_node)
@@ -336,11 +385,13 @@ _builder.add_edge(START,            "build_queries")
 _builder.add_edge("build_queries",  "fetch_material")
 _builder.add_edge("build_queries",  "fetch_supplier")
 _builder.add_edge("build_queries",  "fetch_global")
+_builder.add_edge("build_queries",  "fetch_gdelt")
 
 # Parallel fetch fan-in → merge
 _builder.add_edge("fetch_material", "merge_trend")
 _builder.add_edge("fetch_supplier", "merge_trend")
 _builder.add_edge("fetch_global",   "merge_trend")
+_builder.add_edge("fetch_gdelt",    "merge_trend")
 
 # Linear pipeline after merge
 _builder.add_edge("merge_trend",       "build_trend_items")

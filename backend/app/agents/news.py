@@ -395,13 +395,38 @@ def _build_supplier_prompt(
                     "You are a News Agent for a manufacturing supply "
                     "chain. You receive news items about suppliers, "
                     "OEMs, and regions. Extract structured supply "
-                    "chain risk signals using the following "
-                    "risk types: factory_shutdown, labor_strike, "
+                    "chain risk signals AND positive opportunities.\n\n"
+                    "Valid risk types: factory_shutdown, labor_strike, "
                     "bankruptcy_risk, sanction_risk, "
                     "port_congestion, natural_disaster, "
                     "geopolitical_tension, regulatory_change, "
                     "infrastructure_failure, commodity_shortage, "
                     "cyber_incident.\n\n"
+                    "=== SEVERITY CALIBRATION (strictly follow) ===\n"
+                    "- \"critical\": Confirmed, immediate, direct impact "
+                    "on THIS specific OEM or supplier (e.g. their factory "
+                    "is shut down, they are sanctioned, their port is "
+                    "blocked, war conditions). Use sparingly — most news does NOT warrant "
+                    "critical.\n"
+                    "- \"high\": Confirmed event in the same region/sector "
+                    "with likely direct impact on the OEM or supplier.\n"
+                    "- \"medium\": Event in a related region or sector "
+                    "with possible indirect impact. This should be the "
+                    "DEFAULT for most supply chain disruption news.\n"
+                    "- \"low\": Generic industry news, distant region, or "
+                    "speculative/unconfirmed reports.\n\n"
+                    "IMPORTANT: Do not inflate severity. A news article "
+                    "mentioning a disruption in a region the OEM/supplier "
+                    "does NOT operate in should be \"low\". Generic global "
+                    "news should be \"low\" or \"medium\" at most.\n\n"
+                    "Also extract positive opportunities (new trade deals, "
+                    "capacity expansions, cost reductions, partnerships). "
+                    "Not every article is a risk — look for the positive "
+                    "signals too.\n\n"
+                    "IMPORTANT: News articles may be in any language. "
+                    "Always return all extracted fields in English.\n\n"
+                    "Only set estimatedCost when the article provides a "
+                    "concrete figure. Do not guess or fabricate costs.\n\n"
                     "Return ONLY valid JSON."
                 ),
             ),
@@ -460,16 +485,41 @@ def _build_global_prompt(
                 (
                     "You are a global supply chain News Agent. You "
                     "receive news about macro events (geopolitics, "
-                    "trade, climate, logistics). Extract only "
-                    "material global supply chain risks that could "
-                    "affect the given OEM and supplier."
+                    "trade, climate, logistics, war). Extract only "
+                    "material global supply chain risks AND "
+                    "opportunities that could affect the given OEM "
+                    "and supplier.\n\n"
+                    "=== SEVERITY CALIBRATION (strictly follow) ===\n"
+                    "- \"critical\": Confirmed, large-scale event with "
+                    "direct, immediate impact on the OEM's or supplier's "
+                    "specific region or commodity (e.g. major port closure "
+                    "on their trade route). Use very sparingly.\n"
+                    "- \"high\": Confirmed event in a region or sector "
+                    "directly connected to the OEM/supplier.\n"
+                    "- \"medium\": Event with possible indirect impact. "
+                    "This should be the DEFAULT for most global disruption "
+                    "news.\n"
+                    "- \"low\": Distant region, different sector, or "
+                    "speculative/unconfirmed reports with no clear link.\n\n"
+                    "IMPORTANT: Most global news should be \"low\" or "
+                    "\"medium\". Only escalate to \"high\"/\"critical\" "
+                    "when the article clearly and directly affects the "
+                    "OEM or supplier's region, commodity, or trade routes.\n\n"
+                    "Also extract global opportunities (new trade "
+                    "agreements, tariff reductions, infrastructure "
+                    "investments, market openings).\n\n"
+                    "IMPORTANT: News articles may be in any language. "
+                    "Always return all extracted fields in English.\n\n"
+                    "Only set estimatedCost when the article provides a "
+                    "concrete figure. Do not guess or fabricate costs."
                 ),
             ),
             (
                 "user",
                 (
                     "Analyze the following news items for global supply "
-                    "chain risks relevant to this OEM and supplier.\n\n"
+                    "chain risks and opportunities relevant to this OEM "
+                    "and supplier.\n\n"
                     f"=== Entity Context ===\n{entity_context}\n\n"
                     "=== News Items ===\n{news_items_json}\n\n"
                     "Return JSON of shape:\n"
@@ -488,10 +538,21 @@ def _build_global_prompt(
                     '      "source": str | null\n'
                     "    }}\n"
                     "  ],\n"
-                    '  "opportunities": []\n'
+                    '  "opportunities": [\n'
+                    "    {{\n"
+                    '      "title": str,\n'
+                    '      "description": str,\n'
+                    '      "type": "cost_saving" | '
+                    '"time_saving" | "quality_improvement" | '
+                    '"market_expansion" | '
+                    '"supplier_diversification",\n'
+                    '      "affectedRegion": str | null,\n'
+                    '      "potentialBenefit": str | null,\n'
+                    '      "estimatedValue": number | null\n'
+                    "    }}\n"
+                    "  ]\n"
                     "}}\n"
-                    "If no material global risks, return "
-                    '{{"risks": [], "opportunities": []}}.'
+                    "If none, use empty arrays."
                 ),
             ),
         ]
