@@ -97,7 +97,7 @@ async def _fetch_shipment_tracking(supplier_id: str) -> dict | None:
             "shipment tracking will not be fetched; transit_days/route_plan will use defaults"
         )
         return None
-    url = f"{base_url.rstrip('/')}/shipment-tracking"
+    url = f"{base_url.rstrip('/')}/mock/shipment-tracking"
     logger.info("[WeatherGraph] Fetching shipment tracking: supplier=%s url=%s", supplier_id, url)
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
