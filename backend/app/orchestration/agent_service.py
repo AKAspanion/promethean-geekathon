@@ -1153,11 +1153,9 @@ def trigger_manual_analysis_v2_sync(db: Session, oem_id: UUID | None) -> None:
     Creates WorkflowRun + AgentStatus rows per supplier, then delegates
     all analysis logic to ``RISK_ANALYSIS_GRAPH``.
 
-    The graph runs the News Agent for each supplier (supplier + global
-    contexts in parallel), persists results, computes per-supplier scores,
-    and aggregates an OEM-level risk score.
-
-    Weather and shipment agents are phase-2 placeholders inside the graph.
+    The graph runs the News Agent (supplier + global contexts) and the
+    Shipment Weather Agent for each supplier in parallel, persists results,
+    computes per-supplier scores, and aggregates an OEM-level risk score.
     """
     global _is_running
     running = _get_running_status(db)

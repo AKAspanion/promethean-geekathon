@@ -5,8 +5,8 @@ A LangGraph StateGraph that drives the risk analysis pipeline for one OEM,
 iterating over every supplier sequentially (safe for a single shared
 SQLAlchemy session) and then aggregating an OEM-level risk score.
 
-Currently runs only the News Agent (supplier + global contexts) per supplier.
-Weather and Shipment agents are phase-2 placeholders.
+Runs the News Agent (supplier + global contexts) and the Shipment Weather
+Agent per supplier, then persists results and computes scores.
 
 Graph structure
 ---------------
@@ -14,7 +14,7 @@ Graph structure
     START
       |
       v
-  [process_next_supplier]  <- news agent (supplier+global) in parallel
+  [process_next_supplier]  <- news agent (supplier+global) + shipment weather
       |                       -> persist risks/opps -> compute per-supplier score
       |
       +---(more suppliers?)---> [process_next_supplier]   (loop)
@@ -63,6 +63,7 @@ from app.models.risk import Risk, RiskStatus
 from app.models.supply_chain_risk_score import SupplyChainRiskScore
 from app.models.supplier_risk_analysis import SupplierRiskAnalysis
 from app.agents.news import run_news_agent_graph
+from app.agents.shipment_weather_graph import run_shipment_weather_graph
 from app.services.agent_types import OemScope
 from app.services.langchain_llm import get_chat_model
 from app.services.llm_client import _persist_llm_log
@@ -92,6 +93,113 @@ logger = logging.getLogger(__name__)
 
 # Severity ordering for ranking top risks.
 _SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+_VALID_SEVERITIES = frozenset(_SEV_ORDER)
+_VALID_SOURCE_TYPES = frozenset({"news", "weather", "shipping", "traffic", "global_news"})
+_VALID_OPP_TYPES = frozenset({
+    "cost_saving", "time_saving", "quality_improvement",
+    "market_expansion", "supplier_diversification",
+})
+
+
+# -- Risk / opportunity normalisation ----------------------------------------
+
+def _normalize_risk(risk: dict, default_source: str = "unknown") -> dict | None:
+    """
+    Validate and normalise a risk dict before DB persistence.
+
+    Ensures every risk has the required fields (title, description,
+    sourceType) and that severity is a recognised value.  Returns
+    ``None`` when the dict is irrecoverably malformed so the caller
+    can silently skip it.
+    """
+    if not isinstance(risk, dict):
+        return None
+
+    title = (str(risk.get("title") or "")).strip()
+    description = (str(risk.get("description") or "")).strip()
+    if not title or not description:
+        logger.debug("_normalize_risk: dropping risk with empty title/description")
+        return None
+
+    risk["title"] = title
+    risk["description"] = description
+
+    # Severity — lowercase + fallback
+    raw_sev = (str(risk.get("severity") or "medium")).strip().lower()
+    risk["severity"] = raw_sev if raw_sev in _VALID_SEVERITIES else "medium"
+
+    # sourceType — must be a recognised domain for scoring
+    raw_src = (str(risk.get("sourceType") or default_source)).strip().lower()
+    risk["sourceType"] = raw_src if raw_src in _VALID_SOURCE_TYPES else default_source
+
+    # sourceData — must be a dict (or None)
+    if risk.get("sourceData") is not None and not isinstance(risk["sourceData"], dict):
+        risk["sourceData"] = None
+
+    # Numeric fields — coerce or clear
+    for numeric_key in ("estimatedCost",):
+        val = risk.get(numeric_key)
+        if val is not None:
+            try:
+                risk[numeric_key] = float(val)
+            except (TypeError, ValueError):
+                risk[numeric_key] = None
+
+    # String fields — coerce
+    for str_key in ("affectedRegion", "affectedSupplier", "estimatedImpact"):
+        val = risk.get(str_key)
+        if val is not None:
+            risk[str_key] = str(val).strip() or None
+
+    return risk
+
+
+def _normalize_opportunity(opp: dict, default_source: str = "unknown") -> dict | None:
+    """
+    Validate and normalise an opportunity dict before DB persistence.
+
+    Returns ``None`` when the dict is irrecoverably malformed.
+    """
+    if not isinstance(opp, dict):
+        return None
+
+    title = (str(opp.get("title") or "")).strip()
+    description = (str(opp.get("description") or "")).strip()
+    if not title or not description:
+        logger.debug("_normalize_opportunity: dropping opp with empty title/description")
+        return None
+
+    opp["title"] = title
+    opp["description"] = description
+
+    # type — must be a recognised opportunity type
+    raw_type = (str(opp.get("type") or "cost_saving")).strip().lower()
+    opp["type"] = raw_type if raw_type in _VALID_OPP_TYPES else "cost_saving"
+
+    # sourceType
+    raw_src = (str(opp.get("sourceType") or default_source)).strip().lower()
+    opp["sourceType"] = raw_src if raw_src in _VALID_SOURCE_TYPES else default_source
+
+    # sourceData — must be a dict (or None)
+    if opp.get("sourceData") is not None and not isinstance(opp["sourceData"], dict):
+        opp["sourceData"] = None
+
+    # Numeric fields
+    for numeric_key in ("estimatedValue",):
+        val = opp.get(numeric_key)
+        if val is not None:
+            try:
+                opp[numeric_key] = float(val)
+            except (TypeError, ValueError):
+                opp[numeric_key] = None
+
+    # String fields
+    for str_key in ("affectedRegion", "potentialBenefit"):
+        val = opp.get(str_key)
+        if val is not None:
+            opp[str_key] = str(val).strip() or None
+
+    return opp
 
 
 # -- LLM risk scoring ---------------------------------------------------------
@@ -665,15 +773,14 @@ async def _process_next_supplier(
 
     Steps per supplier
     ------------------
-    1. Run news agent (supplier + global context) in parallel.
+    1. Run news agent (supplier + global context) and shipment weather
+       agent in parallel.
     2. Persist risk and opportunity rows to the DB (linked to supplier).
     3. Query persisted risks, sort by severity, take top 10.
     4. Compute unified score and update Supplier.latestRiskScore.
     5. Create a SupplierRiskAnalysis row.
     6. Update AgentStatusEntity counters.
     7. Broadcast partial supplier snapshot over WebSocket.
-
-    Phase 2: weather and shipment agents will be added here.
     """
     db: Session = config["configurable"]["db"]
     oem_id = UUID(state["oem_id"])
@@ -692,7 +799,7 @@ async def _process_next_supplier(
 
     logger.info("RiskAnalysisGraph: starting supplier '%s'", label)
 
-    # -- 1. Run news agents in parallel ----------------------------------------
+    # -- 1. Run news + shipment weather agents in parallel --------------------
     _update_status(
         db, agent_status_id,
         AgentStatus.ANALYZING.value,
@@ -700,22 +807,52 @@ async def _process_next_supplier(
     )
     await _broadcast_status(db, agent_status_id, supplier_name=supplier_name, oem_name=oem_name)
 
-    supplier_result, global_result = await asyncio.gather(
+    supplier_result, global_result, weather_result = await asyncio.gather(
         run_news_agent_graph({}, scope, context="supplier"),
         run_news_agent_graph({}, scope, context="global"),
+        run_shipment_weather_graph(scope),
     )
-
-    # Phase 2: weather and shipment agents will be added here.
-    # weather_result = await run_weather_agent_graph(weather_data, scope)
-    # shipment_result = await run_shipment_agent_graph(shipping_data, scope)
-
-    all_risks = (supplier_result.get("risks") or []) + (
-        global_result.get("risks") or []
-    )
-    all_opps = supplier_result.get("opportunities") or []
 
     logger.info(
-        "RiskAnalysisGraph: supplier '%s' -- risks=%d opportunities=%d",
+        "RiskAnalysisGraph: supplier '%s' — weather agent returned risks=%d opps=%d",
+        label,
+        len(weather_result.get("risks") or []),
+        len(weather_result.get("opportunities") or []),
+    )
+
+    raw_risks = (
+        (supplier_result.get("risks") or [])
+        + (global_result.get("risks") or [])
+        + (weather_result.get("risks") or [])
+    )
+    raw_opps = (
+        (supplier_result.get("opportunities") or [])
+        + (weather_result.get("opportunities") or [])
+    )
+
+    # -- 1b. Normalise all risk / opportunity dicts across sources ----------
+    all_risks: list[dict] = []
+    for r in raw_risks:
+        normed = _normalize_risk(r, default_source="news")
+        if normed is not None:
+            all_risks.append(normed)
+
+    all_opps: list[dict] = []
+    for o in raw_opps:
+        normed = _normalize_opportunity(o, default_source="news")
+        if normed is not None:
+            all_opps.append(normed)
+
+    dropped_risks = len(raw_risks) - len(all_risks)
+    dropped_opps = len(raw_opps) - len(all_opps)
+    if dropped_risks or dropped_opps:
+        logger.warning(
+            "RiskAnalysisGraph: supplier '%s' — dropped %d malformed risks, %d malformed opps during normalisation",
+            label, dropped_risks, dropped_opps,
+        )
+
+    logger.info(
+        "RiskAnalysisGraph: supplier '%s' -- risks=%d opportunities=%d (after normalisation)",
         label, len(all_risks), len(all_opps),
     )
 

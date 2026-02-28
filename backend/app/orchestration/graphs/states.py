@@ -110,11 +110,8 @@ class RiskAnalysisState(TypedDict, total=False):
     State for RiskAnalysisGraph.
 
     Processes every supplier for one OEM sequentially (safe for a single
-    shared SQLAlchemy session), running domain agents per supplier, then
-    aggregates an OEM-level risk score.
-
-    Currently runs only the news agent; weather and shipment agents will
-    be added in phase 2.
+    shared SQLAlchemy session), running domain agents per supplier
+    (news + shipment weather), then aggregates an OEM-level risk score.
     """
 
     oem_id: str
