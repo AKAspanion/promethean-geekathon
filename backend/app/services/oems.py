@@ -51,3 +51,33 @@ def login_oem(db: Session, email: str) -> tuple[Oem, str]:
 
 def get_all_oems(db: Session) -> list[Oem]:
     return db.query(Oem).order_by(Oem.createdAt.asc()).all()
+
+
+def update_oem(db: Session, oem_id: UUID, data: dict) -> Oem | None:
+    oem = get_oem_by_id(db, oem_id)
+    if not oem:
+        return None
+    if "email" in data and data["email"]:
+        normalized = data["email"].strip().lower()
+        existing = get_oem_by_email(db, normalized)
+        if existing and existing.id != oem_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An OEM with this email is already registered.",
+            )
+        data["email"] = normalized
+    for key, value in data.items():
+        if value is not None:
+            setattr(oem, key, value)
+    db.commit()
+    db.refresh(oem)
+    return oem
+
+
+def delete_oem(db: Session, oem_id: UUID) -> bool:
+    oem = get_oem_by_id(db, oem_id)
+    if not oem:
+        return False
+    db.delete(oem)
+    db.commit()
+    return True

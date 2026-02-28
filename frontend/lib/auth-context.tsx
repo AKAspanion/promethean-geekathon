@@ -34,6 +34,7 @@ type AuthContextValue = {
   hydrated: boolean;
   login: (token: string, oem: Oem) => void;
   logout: () => void;
+  updateOem: (oem: Oem) => void;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -77,6 +78,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(OEM_KEY);
   }, []);
 
+  const updateOem = useCallback((updatedOem: Oem) => {
+    setOemState(updatedOem);
+    localStorage.setItem(OEM_KEY, JSON.stringify(updatedOem));
+  }, []);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       token,
@@ -85,8 +91,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       hydrated,
       login,
       logout,
+      updateOem,
     }),
-    [token, oem, hydrated, login, logout],
+    [token, oem, hydrated, login, logout, updateOem],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

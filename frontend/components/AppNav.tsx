@@ -64,6 +64,14 @@ export function AppNav() {
                 role="menu"
               >
                 <Link
+                  href="/profile"
+                  onClick={() => setProfileOpen(false)}
+                  className="block w-full px-3 py-2 text-left text-sm text-dark-gray dark:text-gray-200 hover:bg-off-white dark:hover:bg-gray-700/50 transition-colors"
+                  role="menuitem"
+                >
+                  Profile
+                </Link>
+                <Link
                   href="/suppliers"
                   onClick={handleSuppliersClick}
                   className="block w-full px-3 py-2 text-left text-sm text-dark-gray dark:text-gray-200 hover:bg-off-white dark:hover:bg-gray-700/50 transition-colors"
