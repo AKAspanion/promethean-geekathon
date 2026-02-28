@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { WeatherGraphResponse, WeatherRisk, WeatherOpportunity } from "@/lib/types";
 import { RISK_LEVEL_COLORS, RISK_LEVEL_BAR_COLORS } from "@/lib/constants";
+import { ShipmentTimeline } from "@/components/ShipmentTimeline";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -542,7 +543,7 @@ interface ShipmentExposureSummaryProps {
 }
 
 export function ShipmentExposureSummary({ data }: ShipmentExposureSummaryProps) {
-  const { risks, opportunities } = data;
+  const { risks, opportunities, daily_timeline } = data;
 
   // Separate route-level risk (has "route" key) from per-day risks (have "day_number")
   const routeRisk = risks.find(
@@ -558,15 +559,22 @@ export function ShipmentExposureSummary({ data }: ShipmentExposureSummaryProps) 
       {/* 1 — Exposure overview */}
       {routeRisk && <ExposureOverview risk={routeRisk} />}
 
-      {/* 2 — Risk factors max breakdown */}
+      {/* 2 — Full day-by-day weather timeline */}
+      {daily_timeline?.length > 0 && (
+        <div className="rounded-2xl border border-light-gray dark:border-gray-600 bg-white dark:bg-gray-800 p-5 shadow-sm">
+          <ShipmentTimeline days={daily_timeline} />
+        </div>
+      )}
+
+      {/* 3 — Risk factors max breakdown */}
       {Object.keys(factorScores).length > 0 && (
         <RiskFactorsMax factors={factorScores} />
       )}
 
-      {/* 3 — Day-level high-risk events */}
+      {/* 4 — Day-level high-risk events */}
       {dayRisks.length > 0 && <DayRiskTimeline dayRisks={dayRisks} />}
 
-      {/* 4 — All risks (expandable) */}
+      {/* 5 — All risks (expandable) */}
       {risks.length > 0 && (
         <div className="space-y-3">
           <h3 className="text-[15px] font-semibold text-dark-gray dark:text-gray-200">
@@ -581,7 +589,7 @@ export function ShipmentExposureSummary({ data }: ShipmentExposureSummaryProps) 
         </div>
       )}
 
-      {/* 5 — Opportunities */}
+      {/* 6 — Opportunities */}
       {opportunities.length > 0 && (
         <div className="space-y-3">
           <h3 className="text-[15px] font-semibold text-dark-gray dark:text-gray-200">
@@ -596,7 +604,7 @@ export function ShipmentExposureSummary({ data }: ShipmentExposureSummaryProps) 
         </div>
       )}
 
-      {/* 6 — Raw JSON */}
+      {/* 7 — Raw JSON */}
       <RawJsonPanel data={data} />
     </div>
   );

@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     weather_api_key: str | None = None
     weather_days_forecast: int = 3
     news_api_key: str | None = None
+    mock_api_base_url: str = ""
 
     # Trend insights agent
     trend_agent_enabled: bool = False

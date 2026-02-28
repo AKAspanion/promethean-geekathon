@@ -85,4 +85,5 @@ export interface WeatherOpportunity {
 export interface WeatherGraphResponse {
   risks: WeatherRisk[];
   opportunities: WeatherOpportunity[];
+  daily_timeline: DayRiskSnapshot[];
 }
