@@ -10,6 +10,30 @@ const RISK_DOT: Record<RiskLevel, string> = {
   critical: "bg-red-600",
 };
 
+type DataSourceType = "historical" | "current" | "forecast";
+
+function getDataSource(date: string, isHistorical: boolean): DataSourceType {
+  if (isHistorical) return "historical";
+  const today = new Date().toISOString().slice(0, 10);
+  if (date === today) return "current";
+  return "forecast";
+}
+
+const DATA_SOURCE_STYLES: Record<DataSourceType, { label: string; className: string }> = {
+  historical: {
+    label: "Historical",
+    className: "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/50",
+  },
+  current: {
+    label: "Live",
+    className: "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/50",
+  },
+  forecast: {
+    label: "Forecast",
+    className: "bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400 border border-violet-200 dark:border-violet-800/50",
+  },
+};
+
 function WeatherIcon({ condition }: { condition: string }) {
   const c = condition.toLowerCase();
   if (c.includes("thunder") || c.includes("storm")) return <span title={condition}>⛈️</span>;
@@ -28,111 +52,128 @@ interface ShipmentTimelineProps {
 
 export function ShipmentTimeline({ days }: ShipmentTimelineProps) {
   return (
-    <div className="space-y-3">
-      <h3 className="text-[13px] font-semibold uppercase tracking-wide text-medium-gray dark:text-gray-400">
-        Day-by-Day Weather Exposure
-      </h3>
+    <div className="space-y-4">
+      {/* Section header */}
+      <div className="flex items-center justify-between">
+        <h3 className="text-[13px] font-semibold uppercase tracking-wide text-medium-gray dark:text-gray-400">
+          Day-by-Day Weather Exposure
+        </h3>
+        <span className="text-[11px] text-medium-gray dark:text-gray-500">
+          {days.length} days
+        </span>
+      </div>
 
-      <div className="flex gap-1">
+      {/* Risk strip — coloured segment per day */}
+      <div className="flex gap-px">
         {days.map((d) => {
           const barColor = RISK_LEVEL_BAR_COLORS[d.risk.overall_level] ?? RISK_LEVEL_BAR_COLORS.low;
           return (
             <div
               key={d.day_number}
-              className={`h-2 flex-1 rounded-full ${barColor}`}
-              title={`Day ${d.day_number}: ${d.risk.overall_level} (${d.risk.overall_score.toFixed(0)}/100)`}
+              className={`h-2 flex-1 first:rounded-l-full last:rounded-r-full ${barColor}`}
+              title={`Day ${d.day_number} · ${d.weather.estimated_location} · ${d.risk.overall_level} (${d.risk.overall_score.toFixed(0)}/100)`}
             />
           );
         })}
       </div>
 
-      <div className="flex gap-2 overflow-x-auto pb-1">
+      {/* Wrapping grid — no horizontal scroll */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5">
         {days.map((d) => {
           const colors = RISK_LEVEL_COLORS[d.risk.overall_level] ?? RISK_LEVEL_COLORS.low;
           const dot = RISK_DOT[d.risk.overall_level];
-          const isOrigin = d.day_number === 1;
-          const isDest = d.day_number === days.length;
+          const isOrigin = /\(origin\)/i.test(d.location_name);
+          const isDest = /\(destination\)/i.test(d.location_name);
+          const cityName = d.weather.estimated_location;
+          const dataSource = getDataSource(d.date, d.weather.is_historical);
+          const ds = DATA_SOURCE_STYLES[dataSource];
+
+          // Derive a short leg label from location_name
+          const legLabel = d.location_name
+            .replace(/\s*\(Origin\)/i, "")
+            .replace(/\s*\(Destination\)/i, "")
+            .replace(/In Transit via (\w+) - Day \d+/i, "via $1")
+            .replace(/In Transit - Day \d+/i, "In Transit")
+            .trim();
+
           return (
             <div
               key={d.day_number}
-              className={`min-w-[150px] flex-1 rounded-xl border p-3 text-[13px] transition ${colors.border} ${colors.bg} dark:border-gray-600 dark:bg-gray-800`}
+              className={`flex flex-col gap-2 rounded-xl border p-3 ${colors.border} ${colors.bg} dark:border-gray-600 dark:bg-gray-800/60`}
             >
-              <div className="flex items-start justify-between gap-1">
-                <div>
-                  <span className="font-semibold text-dark-gray dark:text-gray-200">
+              {/* Top row: day number + origin/dest badges + weather icon */}
+              <div className="flex items-center justify-between gap-1">
+                <div className="flex items-center gap-1 flex-wrap">
+                  <span className="text-[12px] font-bold text-dark-gray dark:text-gray-100">
                     Day {d.day_number}
                   </span>
                   {isOrigin && (
-                    <span className="ml-1.5 rounded-lg bg-sky-blue/40 dark:bg-gray-700 px-1.5 py-0.5 text-[10px] font-medium text-primary-dark dark:text-primary-light">
+                    <span className="rounded bg-sky-blue/50 dark:bg-gray-700 px-1 py-px text-[9px] font-bold uppercase text-primary-dark dark:text-primary-light">
                       Origin
                     </span>
                   )}
                   {isDest && (
-                    <span className="ml-1.5 rounded-full bg-purple-100 dark:bg-purple-900/30 px-1.5 py-0.5 text-[10px] font-medium text-purple-700 dark:text-purple-300">
-                      Dest.
-                    </span>
-                  )}
-                  {d.weather.is_historical && (
-                    <span className="ml-1 rounded-lg bg-light-gray/50 dark:bg-gray-700 px-1.5 py-0.5 text-[10px] font-medium text-medium-gray dark:text-gray-400">
-                      Historical
+                    <span className="rounded bg-purple-100 dark:bg-purple-900/40 px-1 py-px text-[9px] font-bold uppercase text-purple-700 dark:text-purple-300">
+                      Dest
                     </span>
                   )}
                 </div>
                 <WeatherIcon condition={d.weather.condition} />
               </div>
 
-              <p className="mt-0.5 text-[11px] text-medium-gray dark:text-gray-400">{d.date}</p>
-
-              <p className="mt-1 text-[11px] font-medium text-dark-gray dark:text-gray-200 leading-tight">
-                {d.location_name}
-              </p>
-
-              <div className="mt-2 space-y-0.5 text-[12px] text-dark-gray dark:text-gray-300">
-                <div className="flex items-center gap-1">
-                  <span className="text-medium-gray dark:text-gray-400">Cond:</span>{" "}
-                  <span className="font-medium">{d.weather.condition}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-medium-gray dark:text-gray-400">Temp:</span>{" "}
-                  <span className="font-medium">{d.weather.temp_c.toFixed(1)}°C</span>
-                  {d.weather.min_temp_c != null && d.weather.max_temp_c != null && (
-                    <span className="text-[11px] text-medium-gray dark:text-gray-400">
-                      ({d.weather.min_temp_c.toFixed(0)}-{d.weather.max_temp_c.toFixed(0)})
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-medium-gray dark:text-gray-400">Wind:</span>{" "}
-                  <span className="font-medium">{d.weather.wind_kph.toFixed(0)} km/h</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-medium-gray dark:text-gray-400">Rain:</span>{" "}
-                  <span className="font-medium">{d.weather.precip_mm.toFixed(1)} mm</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-medium-gray dark:text-gray-400">Vis:</span>{" "}
-                  <span className="font-medium">{d.weather.vis_km.toFixed(1)} km</span>
-                </div>
+              {/* City + leg label + date */}
+              <div>
+                <p className="text-[13px] font-bold leading-tight text-dark-gray dark:text-gray-100">
+                  {cityName}
+                </p>
+                {legLabel && legLabel !== cityName && (
+                  <p className="text-[10px] leading-tight text-medium-gray dark:text-gray-500 mt-0.5">
+                    {legLabel}
+                  </p>
+                )}
+                <p className="text-[10px] text-medium-gray dark:text-gray-500 mt-0.5">
+                  {d.date}
+                </p>
               </div>
 
-              <div className="mt-3 flex items-center gap-1.5">
-                <span className={`h-2 w-2 rounded-full ${dot}`} />
-                <span className={`text-[12px] font-semibold ${colors.text}`}>
-                  {d.risk.overall_level.charAt(0).toUpperCase() +
-                    d.risk.overall_level.slice(1)}{" "}
-                  ({d.risk.overall_score.toFixed(0)}/100)
+              {/* Data source badge */}
+              <span
+                className={`self-start rounded-full px-2 py-px text-[9px] font-bold uppercase tracking-wide ${ds.className}`}
+              >
+                {ds.label}
+              </span>
+
+              {/* Key stats */}
+              <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px]">
+                <Stat label="Temp" value={`${d.weather.temp_c.toFixed(1)}°C`} />
+                <Stat label="Wind" value={`${d.weather.wind_kph.toFixed(0)} km/h`} />
+                <Stat label="Rain" value={`${d.weather.precip_mm.toFixed(1)} mm`} />
+                <Stat label="Vis" value={`${d.weather.vis_km.toFixed(1)} km`} />
+              </div>
+
+              {/* Risk level */}
+              <div className="flex items-center gap-1.5 pt-1.5 border-t border-black/5 dark:border-white/5">
+                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
+                <span className={`text-[11px] font-semibold ${colors.text}`}>
+                  {d.risk.overall_level.charAt(0).toUpperCase() + d.risk.overall_level.slice(1)}
+                  <span className="ml-1 font-normal opacity-60 text-[10px]">
+                    {d.risk.overall_score.toFixed(0)}/100
+                  </span>
                 </span>
               </div>
-
-              {d.risk.primary_concerns[0] && (
-                <p className="mt-1.5 text-[11px] leading-snug text-dark-gray dark:text-gray-400 opacity-80">
-                  {d.risk.primary_concerns[0]}
-                </p>
-              )}
             </div>
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[10px] text-medium-gray dark:text-gray-400">{label}</span>
+      <span className="text-[12px] font-semibold text-dark-gray dark:text-gray-200">{value}</span>
     </div>
   );
 }

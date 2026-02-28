@@ -40,6 +40,8 @@ import uuid as _uuid
 from datetime import date, timedelta
 from typing import TypedDict
 
+import httpx
+
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END
 
@@ -67,6 +69,110 @@ logger = logging.getLogger(__name__)
 
 # Default transit days when not determinable from metadata.
 DEFAULT_TRANSIT_DAYS = 7
+
+
+# ---------------------------------------------------------------------------
+# Shipment tracking API helper
+# ---------------------------------------------------------------------------
+
+async def _fetch_shipment_tracking(supplier_id: str) -> dict | None:
+    """
+    Fetch shipment tracking data from the mock API for a given supplier.
+
+    Returns ``items[0]["data"]`` which contains:
+      - ``supplier_name``
+      - ``tracking_data`` → ``{route_plan, shipment_meta}``
+
+    Returns None when the env var is missing, supplier_id is empty, or the
+    call fails.
+    """
+    from app.config import settings as _settings
+    base_url = _settings.mock_server_base_url
+    if not supplier_id:
+        logger.debug("[WeatherGraph] _fetch_shipment_tracking: supplier_id is empty — skipping")
+        return None
+    if not base_url:
+        logger.warning(
+            "[WeatherGraph] MOCK_SERVER_BASE_URL is not configured — "
+            "shipment tracking will not be fetched; transit_days/route_plan will use defaults"
+        )
+        return None
+    url = f"{base_url.rstrip('/')}/shipment-tracking"
+    logger.info("[WeatherGraph] Fetching shipment tracking: supplier=%s url=%s", supplier_id, url)
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(url, params={"q": f"supplier_id:{supplier_id}"})
+            r.raise_for_status()
+            data = r.json()
+            items = data.get("items") or []
+            if not items:
+                logger.warning(
+                    "[WeatherGraph] No shipment tracking items for supplier=%s", supplier_id
+                )
+                return None
+            item_data = items[0].get("data") or {}
+            tracking = item_data.get("tracking_data") or {}
+            route_plan = tracking.get("route_plan") or []
+            meta = tracking.get("shipment_meta") or {}
+            logger.info(
+                "[WeatherGraph] Shipment tracking OK: supplier=%s name=%s "
+                "transit_days=%s pickup=%s route_stops=%d",
+                supplier_id,
+                item_data.get("supplier_name", "?"),
+                meta.get("transit_days_estimated", "?"),
+                (meta.get("pickup_date") or "")[:10],
+                len(route_plan),
+            )
+            return item_data  # caller reads .supplier_name + .tracking_data
+    except Exception as exc:
+        logger.warning(
+            "[WeatherGraph] Shipment tracking fetch failed for supplier=%s: %s",
+            supplier_id, exc,
+        )
+        return None
+
+
+def _get_city_for_date_from_route(
+    route_plan: list[dict], target_date: date
+) -> tuple[str, str] | None:
+    """
+    Return ``(city, transport_mode_of_next_leg)`` for *target_date* based on
+    the actual route plan waypoints.
+
+    Logic: the shipment is at the most recent waypoint whose arrival date
+    (actual or planned) is <= target_date.  The transport_mode of the *next*
+    waypoint describes how it travels out of that stop.
+    """
+    sorted_plan = sorted(route_plan, key=lambda x: x.get("sequence", 0))
+    if not sorted_plan:
+        return None
+
+    current_idx = -1
+    for i, wp in enumerate(sorted_plan):
+        arr_str = wp.get("actual_arrival") or wp.get("planned_arrival") or ""
+        if not arr_str:
+            continue
+        try:
+            arr_date = date.fromisoformat(arr_str[:10])
+        except ValueError:
+            continue
+        if arr_date <= target_date:
+            current_idx = i
+        else:
+            break
+
+    if current_idx == -1:
+        # Before any recorded arrival — use origin city
+        loc = sorted_plan[0].get("location", {})
+        return loc.get("city", ""), ""
+
+    wp = sorted_plan[current_idx]
+    city = wp.get("location", {}).get("city", "")
+    # transport_mode of the NEXT leg (how we leave this waypoint)
+    next_mode = ""
+    if current_idx + 1 < len(sorted_plan):
+        next_mode = sorted_plan[current_idx + 1].get("transport_mode", "")
+    return city, next_mode
 
 
 # ---------------------------------------------------------------------------
@@ -110,9 +216,13 @@ class WeatherState(TypedDict, total=False):
     transit_days: int
     shipment_start_date: str  # YYYY-MM-DD
 
+    # Shipment route plan from tracking API (actual waypoints)
+    route_plan: list[dict] | None
+
     # Forecast data fetched in parallel
     supplier_forecast: dict | None
     oem_forecast: dict | None
+    route_city_forecasts: dict[str, dict] | None  # city → forecast data for all route cities
 
     # Day-by-day timeline built from weather data + risk engine
     day_results: list[dict]  # serialised DayRiskSnapshot dicts
@@ -204,6 +314,41 @@ def _extract_day_weather_from_history(
     return None
 
 
+def _get_last_forecast_day(
+    forecast_data: dict, day_number: int, location_label: str,
+    city_used: str, target_date_str: str,
+) -> DayWeatherSnapshot | None:
+    """
+    When *target_date* is beyond the forecast window (WeatherAPI cap: 14 days),
+    return the *last* available forecast day's data as a best-effort estimate.
+    The ``date`` field is set to the actual target date so the timeline stays
+    continuous; ``is_historical`` is left False (it is a future estimate).
+    """
+    try:
+        forecast_days = forecast_data.get("forecast", {}).get("forecastday", [])
+        if not forecast_days:
+            return None
+        last = forecast_days[-1]
+        day = last.get("day", {})
+        cond = day.get("condition", {})
+        return DayWeatherSnapshot(
+            date=target_date_str, day_number=day_number,
+            location_name=location_label, estimated_location=city_used,
+            condition=cond.get("text", "Unknown"),
+            temp_c=float(day.get("avgtemp_c", 0)),
+            min_temp_c=float(day.get("mintemp_c", 0)),
+            max_temp_c=float(day.get("maxtemp_c", 0)),
+            wind_kph=float(day.get("maxwind_kph", 0)),
+            precip_mm=float(day.get("totalprecip_mm", 0)),
+            vis_km=float(day.get("avgvis_km", 10)),
+            humidity=int(day.get("avghumidity", 50)),
+            is_historical=False,
+        )
+    except Exception as e:
+        logger.warning("Failed to get last forecast day for %s: %s", target_date_str, e)
+    return None
+
+
 def _weather_snapshot_to_current_dict(snap: DayWeatherSnapshot) -> dict:
     return {
         "temp_c": snap.temp_c,
@@ -227,8 +372,8 @@ async def _resolve_cities_node(state: WeatherState) -> WeatherState:
     using oemId / supplierId from the scope (same pattern as news agent).
     """
     scope = state["scope"]
-    oem_name = scope.get("oemName") or "Unknown OEM"
-    supplier_name = scope.get("supplierName") or "Unknown Supplier"
+    oem_name: str = scope.get("oemName") or ""
+    supplier_name: str = scope.get("supplierName") or ""
 
     oem_city: str | None = None
     supplier_city: str | None = None
@@ -246,6 +391,12 @@ async def _resolve_cities_node(state: WeatherState) -> WeatherState:
                     or getattr(oem_obj, "location", None)
                     or getattr(oem_obj, "country", None)
                 )
+                if not oem_name:
+                    oem_name = (
+                        getattr(oem_obj, "name", None)
+                        or getattr(oem_obj, "company_name", None)
+                        or ""
+                    )
         if supplier_id_str:
             from uuid import UUID
             sup_obj = get_supplier_by_id(db, UUID(supplier_id_str))
@@ -255,41 +406,101 @@ async def _resolve_cities_node(state: WeatherState) -> WeatherState:
                     or getattr(sup_obj, "location", None)
                     or getattr(sup_obj, "country", None)
                 )
+                if not supplier_name:
+                    supplier_name = (
+                        getattr(sup_obj, "name", None)
+                        or getattr(sup_obj, "company_name", None)
+                        or ""
+                    )
     finally:
         db.close()
 
+    logger.info(
+        "[WeatherGraph] DB lookup: oem=%r city=%s supplier=%r city=%s",
+        oem_name or "?", oem_city or "?", supplier_name or "?", supplier_city or "?",
+    )
+
+    # Always try the shipment tracking API when supplier_id is available:
+    #   - fills transit_days / shipment_start_date (if not pre-set by caller)
+    #   - always fills route_plan for route-aware weather analysis
+    transit_days = state.get("transit_days") or 0
+    shipment_start_date = state.get("shipment_start_date") or ""
+    route_plan: list[dict] | None = None
+
+    if supplier_id_str:
+        item_data = await _fetch_shipment_tracking(supplier_id_str)
+        if item_data:
+            # Supplier name from tracking data (more reliable than DB for display)
+            if not supplier_name:
+                supplier_name = item_data.get("supplier_name") or ""
+            tracking = item_data.get("tracking_data") or {}
+            meta = tracking.get("shipment_meta") or {}
+            if not transit_days:
+                transit_days = int(meta.get("transit_days_estimated") or 0)
+            if not shipment_start_date:
+                pickup_raw = meta.get("pickup_date") or ""
+                shipment_start_date = pickup_raw[:10] if pickup_raw else ""
+            route_plan = tracking.get("route_plan") or None
+            logger.info(
+                "[WeatherGraph] Tracking resolved: transit_days=%d start=%s "
+                "route_stops=%d supplier_name=%r",
+                transit_days, shipment_start_date,
+                len(route_plan) if route_plan else 0,
+                supplier_name,
+            )
+            if route_plan:
+                for wp in sorted(route_plan, key=lambda x: x.get("sequence", 0)):
+                    loc = wp.get("location", {})
+                    logger.info(
+                        "[WeatherGraph]   waypoint seq=%s status=%-9s city=%s mode=%s",
+                        wp.get("sequence", "?"),
+                        wp.get("status", "?"),
+                        loc.get("city", "?"),
+                        wp.get("transport_mode", "?"),
+                    )
+
     if not oem_city or not supplier_city:
         logger.warning(
-            "[WeatherGraph] Cannot resolve cities (oem=%s, supplier=%s) — skipping weather analysis",
+            "[WeatherGraph] Cannot resolve cities (oem_city=%s, supplier_city=%s) — skipping",
             oem_city, supplier_city,
         )
         await _broadcast_progress(
             "resolve_cities_skipped",
             "Cannot resolve supplier/OEM cities — skipping weather analysis",
-            oem_name=oem_name, supplier_name=supplier_name,
+            oem_name=oem_name or "Unknown OEM",
+            supplier_name=supplier_name or "Unknown Supplier",
         )
         return {
             "supplier_city": "",
             "oem_city": "",
-            "oem_name": oem_name,
-            "supplier_name": supplier_name,
+            "oem_name": oem_name or "Unknown OEM",
+            "supplier_name": supplier_name or "Unknown Supplier",
             "transit_days": 0,
             "shipment_start_date": date.today().strftime("%Y-%m-%d"),
+            "route_plan": None,
         }
 
-    # Honour pre-set values (e.g. from run_weather_agent compat wrapper),
-    # otherwise fall back to defaults.
-    transit_days = state.get("transit_days") or DEFAULT_TRANSIT_DAYS
-    shipment_start_date = state.get("shipment_start_date") or date.today().strftime("%Y-%m-%d")
+    if not transit_days:
+        transit_days = DEFAULT_TRANSIT_DAYS
+        logger.info("[WeatherGraph] transit_days not found — using default=%d", transit_days)
+    if not shipment_start_date:
+        shipment_start_date = date.today().strftime("%Y-%m-%d")
+        logger.info("[WeatherGraph] shipment_start_date not found — using today=%s", shipment_start_date)
+
+    oem_name = oem_name or "Unknown OEM"
+    supplier_name = supplier_name or "Unknown Supplier"
 
     logger.info(
-        "[WeatherGraph] Resolved cities: supplier=%s oem=%s transit=%d start=%s",
-        supplier_city, oem_city, transit_days, shipment_start_date,
+        "[WeatherGraph] Resolved: oem=%r city=%s supplier=%r city=%s transit=%d start=%s route=%s",
+        oem_name, oem_city, supplier_name, supplier_city,
+        transit_days, shipment_start_date,
+        "yes" if route_plan else "no",
     )
     await _broadcast_progress(
         "resolve_cities",
-        f"Route: {supplier_city} -> {oem_city} ({transit_days} days)",
-        {"supplier_city": supplier_city, "oem_city": oem_city, "transit_days": transit_days},
+        f"Route: {supplier_city} → {oem_city} ({transit_days} days) via {len(route_plan) if route_plan else 0} stops",
+        {"supplier_city": supplier_city, "oem_city": oem_city, "transit_days": transit_days,
+         "route_stops": len(route_plan) if route_plan else 0},
         oem_name=oem_name, supplier_name=supplier_name,
     )
 
@@ -300,6 +511,7 @@ async def _resolve_cities_node(state: WeatherState) -> WeatherState:
         "supplier_name": supplier_name,
         "transit_days": transit_days,
         "shipment_start_date": shipment_start_date,
+        "route_plan": route_plan,
     }
 
 
@@ -308,46 +520,63 @@ async def _resolve_cities_node(state: WeatherState) -> WeatherState:
 # ---------------------------------------------------------------------------
 
 async def _fetch_forecasts_node(state: WeatherState) -> WeatherState:
-    """Fetch weather forecasts for both supplier and OEM cities in parallel."""
+    """Fetch weather forecasts for all route cities (supplier, OEM, and waypoints) in parallel."""
     supplier_city = state["supplier_city"]
     oem_city = state["oem_city"]
     transit_days = state.get("transit_days", DEFAULT_TRANSIT_DAYS)
+    route_plan = state.get("route_plan")
     oem_name = state.get("oem_name")
     supplier_name = state.get("supplier_name")
 
     if not supplier_city or not oem_city:
         logger.info("[WeatherGraph] Cities not resolved — skipping forecast fetch")
-        return {"supplier_forecast": None, "oem_forecast": None}
+        return {"supplier_forecast": None, "oem_forecast": None, "route_city_forecasts": {}}
 
     today = date.today()
-    start_date = date.today()  # shipment starts today
+    start_date_str = state.get("shipment_start_date") or today.strftime("%Y-%m-%d")
+    start_date = date.fromisoformat(start_date_str)
     forecast_days_needed = max(0, (start_date + timedelta(days=transit_days - 1) - today).days + 1)
     forecast_days_needed = min(forecast_days_needed + 1, 14)
 
+    # Collect all unique cities to fetch: supplier + oem + all route waypoints
+    ordered_cities: list[str] = [supplier_city, oem_city]
+    if route_plan:
+        for wp in sorted(route_plan, key=lambda x: x.get("sequence", 0)):
+            city = wp.get("location", {}).get("city") or ""
+            if city and city not in ordered_cities:
+                ordered_cities.append(city)
+
     logger.info(
-        "[WeatherGraph] Fetching forecasts: supplier=%s oem=%s days=%d",
-        supplier_city, oem_city, forecast_days_needed,
+        "[WeatherGraph] Fetching forecasts for %d cities: %s (days=%d)",
+        len(ordered_cities), ordered_cities, forecast_days_needed,
     )
     await _broadcast_progress(
         "fetch_forecasts",
-        f"Fetching weather forecasts for {supplier_city} and {oem_city}",
-        {"forecast_days": forecast_days_needed},
+        f"Fetching weather forecasts for {len(ordered_cities)} route cities",
+        {"cities": ordered_cities, "forecast_days": forecast_days_needed},
         oem_name=oem_name, supplier_name=supplier_name,
     )
 
     try:
-        supplier_forecast, oem_forecast = await asyncio.gather(
-            get_forecast(supplier_city, days=forecast_days_needed),
-            get_forecast(oem_city, days=forecast_days_needed),
+        results = await asyncio.gather(
+            *[get_forecast(city, days=forecast_days_needed) for city in ordered_cities],
+            return_exceptions=True,
         )
+        supplier_forecast = results[0] if not isinstance(results[0], BaseException) else None
+        oem_forecast = results[1] if len(results) > 1 and not isinstance(results[1], BaseException) else None
+
+        route_city_forecasts: dict[str, dict] = {}
+        for city, result in zip(ordered_cities, results):
+            if isinstance(result, dict):
+                route_city_forecasts[city] = result
+
         logger.info(
-            "[WeatherGraph] Forecasts fetched: supplier=%s oem=%s",
-            "ok" if supplier_forecast else "empty",
-            "ok" if oem_forecast else "empty",
+            "[WeatherGraph] Forecasts fetched: %d/%d cities ok",
+            sum(1 for r in results if isinstance(r, dict)), len(ordered_cities),
         )
         await _broadcast_progress(
             "fetch_forecasts_done",
-            f"Weather forecasts retrieved for both cities",
+            f"Weather forecasts retrieved for {len(route_city_forecasts)} cities",
             oem_name=oem_name, supplier_name=supplier_name,
         )
     except Exception as exc:
@@ -356,11 +585,12 @@ async def _fetch_forecasts_node(state: WeatherState) -> WeatherState:
             "fetch_forecasts_error", f"Forecast fetch error: {exc}",
             oem_name=oem_name, supplier_name=supplier_name,
         )
-        supplier_forecast, oem_forecast = None, None
+        supplier_forecast, oem_forecast, route_city_forecasts = None, None, {}
 
     return {
         "supplier_forecast": supplier_forecast,
         "oem_forecast": oem_forecast,
+        "route_city_forecasts": route_city_forecasts,
     }
 
 
@@ -382,20 +612,28 @@ async def _build_daily_timeline_node(state: WeatherState) -> WeatherState:
     oem_name = state.get("oem_name")
     supplier_name = state.get("supplier_name")
 
+    route_plan = state.get("route_plan")
+    route_city_forecasts = state.get("route_city_forecasts") or {}
+
     today = date.today()
     start_date = date.fromisoformat(shipment_start_date)
-    waypoints = _interpolate_waypoints(supplier_city, oem_city, transit_days)
+
+    # Use actual route waypoints when available, otherwise fall back to interpolation
+    use_route = bool(route_plan)
+    if not use_route:
+        waypoints = _interpolate_waypoints(supplier_city, oem_city, transit_days)
 
     await _broadcast_progress(
         "build_timeline",
-        f"Analyzing {transit_days}-day weather timeline",
-        {"transit_days": transit_days},
+        f"Analyzing {transit_days}-day weather timeline"
+        + (f" across {len(route_plan)} route stops" if route_plan else ""),
+        {"transit_days": transit_days, "route_based": use_route},
         oem_name=oem_name, supplier_name=supplier_name,
     )
 
     day_results: list[DayRiskSnapshot] = []
 
-    for i, waypoint_city in enumerate(waypoints):
+    for i in range(transit_days):
         day_number = i + 1
         target_date = start_date + timedelta(days=i)
         target_date_str = target_date.strftime("%Y-%m-%d")
@@ -403,11 +641,40 @@ async def _build_daily_timeline_node(state: WeatherState) -> WeatherState:
         is_past = target_date < today
         is_today = target_date == today
 
-        location_label = (
-            f"{supplier_city} (Origin)" if i == 0
-            else f"{oem_city} (Destination)" if i == transit_days - 1
-            else f"In Transit - Day {day_number}"
-        )
+        # --- Determine city and location label for this day ---
+        if use_route:
+            sorted_route = sorted(route_plan, key=lambda x: x.get("sequence", 0))
+            if i == 0:
+                # Always force origin = first route waypoint (ignore arrival-date logic)
+                origin_wp = sorted_route[0]
+                waypoint_city = origin_wp.get("location", {}).get("city", "") or supplier_city
+                transport_mode = ""
+                location_label = f"{waypoint_city} (Origin)"
+            elif i == transit_days - 1:
+                # Always force destination = last route waypoint
+                dest_wp = sorted_route[-1]
+                waypoint_city = dest_wp.get("location", {}).get("city", "") or oem_city
+                transport_mode = ""
+                location_label = f"{waypoint_city} (Destination)"
+            else:
+                route_result = _get_city_for_date_from_route(route_plan, target_date)
+                if route_result:
+                    waypoint_city, transport_mode = route_result
+                else:
+                    waypoint_city, transport_mode = supplier_city, ""
+                if transport_mode:
+                    location_label = f"In Transit via {transport_mode} - Day {day_number}"
+                else:
+                    location_label = f"In Transit - Day {day_number}"
+        else:
+            waypoint_city = waypoints[i]
+            transport_mode = ""
+            if i == 0:
+                location_label = f"{supplier_city} (Origin)"
+            elif i == transit_days - 1:
+                location_label = f"{oem_city} (Destination)"
+            else:
+                location_label = f"In Transit - Day {day_number}"
 
         weather_snap: DayWeatherSnapshot | None = None
         city_used = waypoint_city
@@ -436,18 +703,34 @@ async def _build_daily_timeline_node(state: WeatherState) -> WeatherState:
                     hist_data, target_date_str, day_number, location_label, city_used,
                 )
         else:
-            midpoint = transit_days // 2
-            forecast_data = supplier_forecast if i < midpoint else oem_forecast
+            # Try route-specific forecast first, then supplier/oem fallback
+            forecast_data = route_city_forecasts.get(waypoint_city)
+            if not forecast_data:
+                midpoint = transit_days // 2
+                forecast_data = supplier_forecast if i < midpoint else oem_forecast
             if forecast_data:
                 weather_snap = _extract_day_weather_from_forecast(
                     forecast_data, target_date_str, day_number, location_label, city_used,
                 )
-            if not weather_snap:
+            # Fresh fetch only when city is truly missing from our pre-fetched cache
+            if not weather_snap and waypoint_city not in route_city_forecasts:
                 fresh_forecast = await get_forecast(waypoint_city, days=14)
                 if fresh_forecast:
+                    route_city_forecasts[waypoint_city] = fresh_forecast  # cache it
+                    forecast_data = fresh_forecast
                     weather_snap = _extract_day_weather_from_forecast(
                         fresh_forecast, target_date_str, day_number, location_label, city_used,
                     )
+            # Last resort: date is beyond 14-day API window — use last available day as estimate
+            if not weather_snap and forecast_data:
+                logger.info(
+                    "[WeatherGraph] Day %d (%s) beyond forecast window — "
+                    "using last available forecast day for %s",
+                    day_number, target_date_str, city_used,
+                )
+                weather_snap = _get_last_forecast_day(
+                    forecast_data, day_number, location_label, city_used, target_date_str,
+                )
 
         if not weather_snap:
             logger.warning(
@@ -618,7 +901,7 @@ async def _build_exposure_risks_node(state: WeatherState) -> WeatherState:
     elif exposure_score >= 50:
         severity = "high"
     elif exposure_score >= 25:
-        severity = "medium"
+        severity = "moderate"
     else:
         severity = "low"
 
@@ -646,6 +929,7 @@ async def _build_exposure_risks_node(state: WeatherState) -> WeatherState:
                     "weather_exposure_score": exposure_score,
                     "peak_risk_score": peak_score,
                     "peak_risk_day": peak_day,
+                    "peak_risk_date": peak_date,
                     "high_risk_day_count": high_risk_count,
                     "route": f"{supplier_city} -> {oem_city}",
                 },
@@ -893,19 +1177,22 @@ async def run_weather_graph(
 
     risks = final_state.get("weather_risks") or []
     opps = final_state.get("weather_opportunities") or []
+    daily_timeline = final_state.get("day_results") or []
 
+    oem_resolved = final_state.get("oem_name") or oem_label
+    supplier_resolved = final_state.get("supplier_name") or supplier_label
     logger.info(
-        "[WeatherGraph] Completed for %s: risks=%d opportunities=%d",
-        entity_label, len(risks), len(opps),
+        "[WeatherGraph] Completed: oem=%r supplier=%r risks=%d opportunities=%d daily_days=%d",
+        oem_resolved, supplier_resolved, len(risks), len(opps), len(daily_timeline),
     )
     await _broadcast_progress(
         "completed",
-        f"Weather analysis complete: {len(risks)} risks, {len(opps)} opportunities",
-        {"risks": len(risks), "opportunities": len(opps)},
-        oem_name=oem_label, supplier_name=supplier_label,
+        f"Weather analysis complete: {len(risks)} risks, {len(opps)} opportunities, {len(daily_timeline)} days",
+        {"risks": len(risks), "opportunities": len(opps), "daily_days": len(daily_timeline)},
+        oem_name=oem_resolved, supplier_name=supplier_resolved,
     )
 
-    return {"risks": risks, "opportunities": opps}
+    return {"risks": risks, "opportunities": opps, "daily_timeline": daily_timeline}
 
 
 # ---------------------------------------------------------------------------

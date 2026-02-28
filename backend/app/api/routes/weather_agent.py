@@ -2,54 +2,21 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
-from app.agents.legacy_weather import run_weather_risk_agent
-from app.agents.weather import run_weather_agent
+from app.agents.weather import run_weather_graph
+from app.api.deps import get_current_oem
 from app.config import settings
-from app.schemas.weather_agent import (
-    HealthResponse,
-    LocationInfo,
-    RiskSummary,
-    ShipmentInput,
-    ShipmentWeatherExposureResponse,
-    WeatherCondition,
-    WeatherRiskResponse,
-)
+from app.models.oem import Oem
+from app.schemas.weather_agent import HealthResponse
+from app.services.agent_types import OemScope
 
 router = APIRouter(prefix="/api/v1", tags=["weather-agent"])
 
 
-def _normalize_current(data: dict) -> tuple[LocationInfo, WeatherCondition]:
-    loc = data.get("location") or {}
-    current = data.get("current") or {}
-    cond = current.get("condition") or {}
-
-    location = LocationInfo(
-        name=loc.get("name", ""),
-        region=loc.get("region"),
-        country=loc.get("country", ""),
-        lat=float(loc.get("lat", 0)),
-        lon=float(loc.get("lon", 0)),
-        tz_id=loc.get("tz_id"),
-        localtime=loc.get("localtime"),
-    )
-    weather = WeatherCondition(
-        text=cond.get("text", "Unknown"),
-        temp_c=float(current.get("temp_c", 0)),
-        feelslike_c=float(current.get("feelslike_c", current.get("temp_c", 0))),
-        wind_kph=float(current.get("wind_kph", 0)),
-        wind_degree=current.get("wind_degree"),
-        pressure_mb=float(current.get("pressure_mb", 1013)),
-        precip_mm=float(current.get("precip_mm", 0)),
-        humidity=int(current.get("humidity", 0)),
-        cloud=int(current.get("cloud", 0)),
-        vis_km=float(current.get("vis_km", 10)),
-        uv=current.get("uv"),
-        gust_kph=current.get("gust_kph"),
-        condition_code=cond.get("code"),
-    )
-    return location, weather
+class WeatherExposureRequest(BaseModel):
+    supplier_id: str
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -61,53 +28,48 @@ async def health():
     )
 
 
-@router.get("/weather/risk", response_model=WeatherRiskResponse)
-async def get_weather_risk(city: str):
-    city = city.strip()
-
-    state = await run_weather_risk_agent(city)
-    data = state.get("weather_data")
-    if not data:
-        raise HTTPException(
-            status_code=502,
-            detail="Weather service unavailable or invalid location. Check WEATHER_API_KEY and try city (e.g. New Delhi, London).",
-        )
-
-    location, weather = _normalize_current(data)
-    risk_dict = state.get("risk_dict") or {}
-    if "overall_level" in risk_dict and hasattr(risk_dict["overall_level"], "value"):
-        risk_dict = {**risk_dict, "overall_level": risk_dict["overall_level"].value}
-    risk = RiskSummary(**risk_dict)
-    agent_summary = state.get("llm_summary")
-
-    return WeatherRiskResponse(
-        location=location,
-        weather=weather,
-        risk=risk,
-        agent_summary=agent_summary,
-        raw_weather=data.get("current") if data else None,
-    )
-
-
-@router.post(
-    "/shipment/weather-exposure", response_model=ShipmentWeatherExposureResponse
-)
-async def get_weather_exposure(body: ShipmentInput):
+@router.post("/shipment/weather-exposure")
+async def get_weather_exposure(
+    body: WeatherExposureRequest,
+    oem: Oem = Depends(get_current_oem),
+):
     """
     Analyse weather exposure for a shipment from Supplier to OEM.
-    Returns a day-by-day risk timeline and a structured payload for the Risk Analysis Agent.
+
+    Supplier city is resolved from the database using the ``supplier_id``
+    in the request body.  OEM city is resolved from the authenticated user.
+    Transit duration and start date default to today inside the graph.
+
+    Returns ``{"risks": [...], "opportunities": [...]}`` ready for the
+    Risk Analysis Agent.
     """
+    scope: OemScope = {
+        "oemId": str(oem.id),
+        "oemName": oem.name or "",
+        "supplierNames": [],
+        "locations": [],
+        "cities": [],
+        "countries": [],
+        "regions": [],
+        "commodities": [],
+        "supplierId": body.supplier_id,
+        "supplierName": "",
+    }
+
     try:
-        result = await run_weather_agent(
-            supplier_city=body.supplier_city.strip(),
-            oem_city=body.oem_city.strip(),
-            shipment_start_date=body.shipment_start_date.strip(),
-            transit_days=body.transit_days,
-        )
-        return result
+        result = await run_weather_graph(scope)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         raise HTTPException(
             status_code=502, detail=f"Shipment weather agent failed: {e}"
         )
+
+    # Surface a clear error if cities couldn't be resolved (supplier has no location data)
+    if not result.get("daily_timeline") and not result.get("risks") and not result.get("opportunities"):
+        raise HTTPException(
+            status_code=422,
+            detail="Could not resolve city for this supplier. Make sure the supplier has a city or location set.",
+        )
+
+    return result

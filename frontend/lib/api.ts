@@ -1,9 +1,5 @@
 import axios from "axios";
-import type {
-  WeatherRiskResponse,
-  ShipmentInput,
-  ShipmentWeatherExposureResponse,
-} from "@/lib/types";
+import type { WeatherGraphResponse } from "@/lib/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -282,27 +278,19 @@ export const oemsApi = {
   deleteAccount: () => api.delete("/oems/me"),
 };
 
-// Weather agent API (from POC: city risk + shipment weather exposure)
-export async function fetchWeatherRisk(
-  city: string,
-): Promise<WeatherRiskResponse> {
-  const url = `${API_BASE_URL}/api/v1/weather/risk?city=${encodeURIComponent(city.trim())}`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    const message = body?.detail ?? `Request failed with ${res.status}`;
-    throw new Error(message);
-  }
-  return res.json();
-}
-
+// Weather agent API (shipment weather exposure)
 export async function fetchShipmentWeatherExposure(
-  input: ShipmentInput,
-): Promise<ShipmentWeatherExposureResponse> {
+  supplierId: string,
+): Promise<WeatherGraphResponse> {
+  const token =
+    typeof window !== "undefined" ? localStorage.getItem("oem_token") : null;
   const res = await fetch(`${API_BASE_URL}/api/v1/shipment/weather-exposure`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ supplier_id: supplierId }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -583,14 +571,10 @@ export const shippingRiskApi = {
             );
 
             for (const cp of sorted) {
-              const loc = cp.location as
-                | Record<string, unknown>
-                | undefined;
+              const loc = cp.location as Record<string, unknown> | undefined;
               const city = loc?.city ?? "";
               const country = loc?.country ?? "";
-              const locationStr = [city, country]
-                .filter(Boolean)
-                .join(", ");
+              const locationStr = [city, country].filter(Boolean).join(", ");
 
               out.push({
                 supplier_name: data.supplier_name as string | undefined,
