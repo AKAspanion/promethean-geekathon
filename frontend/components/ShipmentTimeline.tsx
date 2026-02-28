@@ -93,7 +93,7 @@ function FactorCard({ factor }: { factor: RiskFactor }) {
         onClick={() => setOpen((o) => !o)}
       >
         <span
-          className={`h-2 w-2 shrink-0 rounded-full ${levelDot[factor.level] ?? "bg-gray-400"}`}
+          className={`h-2 w-2 shrink-0 rounded-full ${levelDot[factor.level] ?? "bg-gray-400 dark:bg-gray-500"}`}
         />
         <span className="flex-1 text-[12px] font-semibold text-dark-gray dark:text-gray-100 capitalize">
           {label}
