@@ -3,3 +3,8 @@ dist/
 .env
 *.log
 .DS_Store
+
+# Python virtual envs (root-level)
+venv/
+.venv/
+shipping_agent/

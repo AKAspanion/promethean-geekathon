@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     port: int = 8000
     env: str = "development"
     frontend_url: str = "http://localhost:3000"
+    mock_server_base_url: str | None = None  # e.g. http://localhost:4000
 
     model_config = {"env_file": ".env", "extra": "ignore", "env_file_encoding": "utf-8"}
 

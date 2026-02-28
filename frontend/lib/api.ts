@@ -1,5 +1,9 @@
 import axios from "axios";
-import type { WeatherRiskResponse, ShipmentInput, ShipmentWeatherExposureResponse } from "@/lib/types";
+import type {
+  WeatherRiskResponse,
+  ShipmentInput,
+  ShipmentWeatherExposureResponse,
+} from "@/lib/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -37,7 +41,13 @@ api.interceptors.response.use(
 // Types
 export interface AgentStatus {
   id: string;
-  status: "idle" | "monitoring" | "analyzing" | "processing" | "completed" | "error";
+  status:
+    | "idle"
+    | "monitoring"
+    | "analyzing"
+    | "processing"
+    | "completed"
+    | "error";
   currentTask?: string;
   lastProcessedData?: Record<string, unknown>;
   lastDataSource?: string;
@@ -130,9 +140,9 @@ export interface SupplierRiskSummary {
   latest: { id: string; severity: string; title: string } | null;
 }
 
-export type SwarmAgentType = 'WEATHER' | 'SHIPPING' | 'NEWS';
+export type SwarmAgentType = "WEATHER" | "SHIPPING" | "NEWS";
 
-export type SwarmRiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+export type SwarmRiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
 export interface SwarmAgentResult {
   agentType: SwarmAgentType;
@@ -201,24 +211,36 @@ export const agentApi = {
   getStatus: () =>
     api.get<AgentStatus>("/agent/status").then((res) => res.data),
   triggerAnalysis: () => api.post("/agent/trigger").then((res) => res.data),
-  triggerAnalysisV2: () => api.post("/agent/trigger/v2").then((res) => res.data),
+  triggerAnalysisV2: () =>
+    api.post("/agent/trigger/v2").then((res) => res.data),
   triggerNewsAnalysis: (oemId?: string, supplierId?: string) =>
     api
-      .post<{ message: string; oemId: string; risksCreated: number; opportunitiesCreated: number }>(
-        "/agent/trigger/news",
-        { ...(oemId ? { oemId } : {}), ...(supplierId ? { supplierId } : {}) }
-      )
+      .post<{
+        message: string;
+        oemId: string;
+        risksCreated: number;
+        opportunitiesCreated: number;
+      }>("/agent/trigger/news", {
+        ...(oemId ? { oemId } : {}),
+        ...(supplierId ? { supplierId } : {}),
+      })
       .then((res) => res.data),
 };
 
 export const risksApi = {
-  getAll: (params?: { status?: string; severity?: string; sourceType?: string; supplierId?: string }) =>
-    api.get<Risk[]>("/risks", { params }).then((res) => res.data),
+  getAll: (params?: {
+    status?: string;
+    severity?: string;
+    sourceType?: string;
+    supplierId?: string;
+  }) => api.get<Risk[]>("/risks", { params }).then((res) => res.data),
   getById: (id: string) =>
     api.get<Risk>(`/risks/${id}`).then((res) => res.data),
   getStats: () => api.get("/risks/stats/summary").then((res) => res.data),
   getSupplyChainScore: () =>
-    api.get<SupplyChainRiskScore | null>("/risks/supply-chain-score").then((res) => res.data),
+    api
+      .get<SupplyChainRiskScore | null>("/risks/supply-chain-score")
+      .then((res) => res.data),
 };
 
 export const opportunitiesApi = {
@@ -254,16 +276,16 @@ export const oemsApi = {
     api
       .post<{ oem: Oem; token: string }>("/oems/login", { email })
       .then((res) => res.data),
-  getProfile: () =>
-    api.get<Oem>("/oems/me").then((res) => res.data),
+  getProfile: () => api.get<Oem>("/oems/me").then((res) => res.data),
   updateProfile: (data: OemUpdatePayload) =>
     api.put<Oem>("/oems/me", data).then((res) => res.data),
-  deleteAccount: () =>
-    api.delete("/oems/me"),
+  deleteAccount: () => api.delete("/oems/me"),
 };
 
 // Weather agent API (from POC: city risk + shipment weather exposure)
-export async function fetchWeatherRisk(city: string): Promise<WeatherRiskResponse> {
+export async function fetchWeatherRisk(
+  city: string,
+): Promise<WeatherRiskResponse> {
   const url = `${API_BASE_URL}/api/v1/weather/risk?city=${encodeURIComponent(city.trim())}`;
   const res = await fetch(url);
   if (!res.ok) {
@@ -275,7 +297,7 @@ export async function fetchWeatherRisk(city: string): Promise<WeatherRiskRespons
 }
 
 export async function fetchShipmentWeatherExposure(
-  input: ShipmentInput
+  input: ShipmentInput,
 ): Promise<ShipmentWeatherExposureResponse> {
   const res = await fetch(`${API_BASE_URL}/api/v1/shipment/weather-exposure`, {
     method: "POST",
@@ -330,8 +352,15 @@ export const trendInsightsApi = {
     api
       .post<TrendInsightRunResult>(`/trend-insights/run/supplier/${supplierId}`)
       .then((res) => res.data),
-  getAll: (params?: { scope?: string; entity_name?: string; severity?: string; limit?: number }) =>
-    api.get<TrendInsightItem[]>("/trend-insights", { params }).then((res) => res.data),
+  getAll: (params?: {
+    scope?: string;
+    entity_name?: string;
+    severity?: string;
+    limit?: number;
+  }) =>
+    api
+      .get<TrendInsightItem[]>("/trend-insights", { params })
+      .then((res) => res.data),
 };
 
 export const suppliersApi = {
@@ -356,58 +385,84 @@ export const suppliersApi = {
   delete: (id: string) => api.delete(`/suppliers/${id}`),
 };
 
-// Shipping Risk Intelligence (from hackathon POC)
-export interface ShippingSupplierItem {
-  id: number;
-  name: string;
-  material_name: string;
-  location_city: string | null;
-  destination_city: string;
-  latitude: number | null;
-  longitude: number | null;
-  shipping_mode: string;
-  distance_km: number | null;
-  avg_transit_days: number | null;
-  historical_delay_percentage: number | null;
-  port_used: string | null;
-  alternate_route_available: boolean;
-  is_critical_supplier: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
+// Shipping Risk Intelligence
 export interface ShippingRiskResult {
   shipping_risk_score: number;
   risk_level: string;
-  delay_probability: number;
-  delay_risk_score?: number | null;
-  stagnation_risk_score?: number | null;
-  velocity_risk_score?: number | null;
+  delay_risk?: { score: number; label: string } | null;
+  stagnation_risk?: { score: number; label: string } | null;
+  velocity_risk?: { score: number; label: string } | null;
   risk_factors: string[];
   recommended_actions: string[];
   shipment_metadata?: Record<string, unknown> | null;
 }
 
 export interface TrackingActivity {
-  date: string;
-  status: string;
-  activity: string;
-  location: string;
+  supplier_name?: string;
+  status?: string;
+  date?: string;
+  activity?: string;
+  location?: string;
+  daysWithoutMovement?: number;
+  [key: string]: unknown;
 }
 
+const MOCK_SERVER_URL =
+  process.env.NEXT_PUBLIC_MOCK_SERVER_URL || "http://localhost:4000";
+
 export const shippingRiskApi = {
-  getSuppliers: () =>
-    api
-      .get<ShippingSupplierItem[]>("/shipping/suppliers/")
-      .then((res) => res.data),
-  runRisk: (supplierId: number) =>
+  // Uses the main suppliers endpoint — scoped to the authenticated OEM
+  getSuppliers: () => api.get<Supplier[]>("/suppliers").then((res) => res.data),
+
+  // supplierId is a UUID string
+  runRisk: (supplierId: string) =>
     api
       .post<ShippingRiskResult>(`/shipping/shipping-risk/${supplierId}`)
       .then((res) => res.data),
-  getTracking: (awbCode: string) =>
-    api
-      .get<{ tracking_data?: { shipment_track_activities?: TrackingActivity[] } }>(
-        `/shipping/tracking/${encodeURIComponent(awbCode)}`
-      )
-      .then((res) => res.data),
+
+  // Fetches tracking records from the mock server and flattens nested events.
+  // Handles two shapes:
+  //   Nested: { supplier_id, tracking_data: { shipment_track_activities: [...events] } }
+  //   Flat:   { supplier_id, status, date, location, activity, ... }
+  getTracking: (supplierId: string): Promise<TrackingActivity[]> =>
+    fetch(
+      `${MOCK_SERVER_URL}/mock/shipment-tracking?q=supplier_id:${encodeURIComponent(supplierId)}`,
+    )
+      .then((res) => res.json())
+      .then((payload) => {
+        const items = (payload.items ?? []) as {
+          data: Record<string, unknown>;
+        }[];
+        const out: TrackingActivity[] = [];
+
+        for (const item of items) {
+          const data = item.data ?? {};
+          const td = data.tracking_data as Record<string, unknown> | undefined;
+          const events = Array.isArray(td?.shipment_track_activities)
+            ? (td!.shipment_track_activities as Record<string, unknown>[])
+            : null;
+
+          if (events && events.length > 0) {
+            // Nested structure — emit one timeline entry per event
+            for (const ev of events) {
+              out.push({
+                supplier_id: data.supplier_id,
+                status: ev.status,
+                activity: ev.activity,
+                location: ev.location,
+                date: ev.date,
+              } as TrackingActivity);
+            }
+          } else {
+            // Flat structure — use the record directly, skip nested objects
+            const flat: TrackingActivity = {};
+            for (const [k, v] of Object.entries(data)) {
+              if (typeof v !== "object" || v === null) flat[k] = v;
+            }
+            out.push(flat);
+          }
+        }
+
+        return out;
+      }),
 };

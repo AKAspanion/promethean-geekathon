@@ -1,4 +1,4 @@
-"""Shipping risk assessment: run agent per supplier or for all, list assessments."""
+"""Shipping risk assessment: run agent per supplier or for all suppliers."""
 
 from __future__ import annotations
 
@@ -6,16 +6,33 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models.shipping_risk_assessment import ShippingRiskAssessment
-from app.models.shipping_supplier import ShippingSupplier
-from app.schemas.shipping_risk import (
-    BulkShippingRiskResult,
-    ShippingRiskAssessmentOut,
-    ShippingRiskResult,
-)
+from app.models.oem import Oem
+from app.models.supplier import Supplier
+from app.schemas.shipping_risk import BulkShippingRiskResult, ShippingRiskResult
+from app.services.agent_types import OemScope
 from app.services.shipping_risk import calculate_shipping_risk
 
 router = APIRouter(prefix="/shipping/shipping-risk", tags=["shipping"])
+
+
+def _build_scope(supplier: Supplier, oem: Oem | None) -> OemScope:
+    """Build OemScope from a Supplier DB row and its OEM."""
+    return {
+        "oemId": str(supplier.oemId) if supplier.oemId else "",
+        "oemName": oem.name if oem else "",
+        "supplierNames": [supplier.name],
+        "locations": [supplier.location] if supplier.location else [],
+        "cities": [supplier.city] if supplier.city else [],
+        "countries": [supplier.country] if supplier.country else [],
+        "regions": [supplier.region] if supplier.region else [],
+        "commodities": (
+            [c.strip() for c in supplier.commodities.split(",") if c.strip()]
+            if supplier.commodities
+            else []
+        ),
+        "supplierId": str(supplier.id),
+        "supplierName": supplier.name,
+    }
 
 
 @router.post(
@@ -24,70 +41,48 @@ router = APIRouter(prefix="/shipping/shipping-risk", tags=["shipping"])
     status_code=status.HTTP_201_CREATED,
 )
 def run_for_supplier(
-    supplier_id: int,
+    supplier_id: str,
     db: Session = Depends(get_db),
 ) -> ShippingRiskResult:
-    supplier = (
-        db.query(ShippingSupplier).filter(ShippingSupplier.id == supplier_id).first()
-    )
+    supplier = db.query(Supplier).filter(Supplier.id == supplier_id).first()
     if not supplier:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Supplier not found"
         )
 
-    result_dict = calculate_shipping_risk(supplier, db)
-
-    assessment = ShippingRiskAssessment(
-        supplier_id=supplier.id,
-        shipping_risk_score=result_dict["shipping_risk_score"],
-        risk_level=result_dict["risk_level"],
-        delay_probability=result_dict["delay_probability"],
-        delay_risk_score=result_dict.get("delay_risk_score"),
-        stagnation_risk_score=result_dict.get("stagnation_risk_score"),
-        velocity_risk_score=result_dict.get("velocity_risk_score"),
-        risk_factors=result_dict["risk_factors"],
-        recommended_actions=result_dict["recommended_actions"],
-        shipment_metadata=result_dict.get("shipment_metadata"),
+    oem = (
+        db.query(Oem).filter(Oem.id == supplier.oemId).first()
+        if supplier.oemId
+        else None
     )
-    db.add(assessment)
-    db.commit()
 
+    scope = _build_scope(supplier, oem)
+    result_dict = calculate_shipping_risk(scope, db)
     return ShippingRiskResult(**result_dict)
 
 
 @router.post("/run-all", response_model=list[BulkShippingRiskResult])
 def run_for_all(db: Session = Depends(get_db)) -> list[BulkShippingRiskResult]:
-    suppliers = db.query(ShippingSupplier).all()
-    results: list[BulkShippingRiskResult] = []
+    suppliers = db.query(Supplier).all()
 
+    oem_ids = {str(s.oemId) for s in suppliers if s.oemId}
+    oems: dict[str, Oem] = (
+        {str(o.id): o for o in db.query(Oem).filter(Oem.id.in_(oem_ids)).all()}
+        if oem_ids
+        else {}
+    )
+
+    results: list[BulkShippingRiskResult] = []
     for supplier in suppliers:
-        result_dict = calculate_shipping_risk(supplier, db)
-        assessment = ShippingRiskAssessment(
-            supplier_id=supplier.id,
-            shipping_risk_score=result_dict["shipping_risk_score"],
-            risk_level=result_dict["risk_level"],
-            delay_probability=result_dict["delay_probability"],
-            delay_risk_score=result_dict.get("delay_risk_score"),
-            stagnation_risk_score=result_dict.get("stagnation_risk_score"),
-            velocity_risk_score=result_dict.get("velocity_risk_score"),
-            risk_factors=result_dict["risk_factors"],
-            recommended_actions=result_dict["recommended_actions"],
-            shipment_metadata=result_dict.get("shipment_metadata"),
-        )
-        db.add(assessment)
+        oem = oems.get(str(supplier.oemId)) if supplier.oemId else None
+        scope = _build_scope(supplier, oem)
+        result_dict = calculate_shipping_risk(scope, db)
         results.append(
             BulkShippingRiskResult(
-                supplier_id=supplier.id,
+                supplier_id=str(supplier.id),
                 supplier_name=supplier.name,
                 result=ShippingRiskResult(**result_dict),
             )
         )
 
-    db.commit()
     return results
-
-
-@router.get("/assessments", response_model=list[ShippingRiskAssessmentOut])
-def list_assessments(db: Session = Depends(get_db)) -> list[ShippingRiskAssessmentOut]:
-    assessments = db.query(ShippingRiskAssessment).all()
-    return [ShippingRiskAssessmentOut.model_validate(a) for a in assessments]

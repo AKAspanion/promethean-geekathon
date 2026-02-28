@@ -1,17 +1,22 @@
-"""LLM-powered shipment risk agent (OpenAI-compatible)."""
+"""LLM-powered shipment risk analysis service."""
 
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
+import httpx
 from openai import OpenAI
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models.shipping_supplier import ShippingSupplier
-from app.models.shipment import Shipment
-from app.services.mock_tracking import get_tracking
+from app.models.supplier import Supplier
+from app.services.agent_types import OemScope
+
+logger = logging.getLogger(__name__)
+
+SHIPMENT_TRACKING_COLLECTION = "shipment-tracking"
 
 
 def _build_client() -> OpenAI:
@@ -24,126 +29,173 @@ def _build_client() -> OpenAI:
     return OpenAI(api_key=api_key)
 
 
-SYSTEM_PROMPT = """You are a Shipment Risk Intelligence Agent.
+SYSTEM_PROMPT = """You are a Shipment Risk Intelligence Agent for a manufacturing supply chain.
 
-You will be given JSON context: supplier details, shipments, tracking events.
+You will be given JSON context containing:
+- oem: OEM details (id, name, locations, commodities)
+- supplier: Supplier details (name, city, country, region, commodities)
+- tracking: List of shipment tracking records for this supplier
 
 Your goals:
-1. Construct shipment metadata (shipments + tracking timeline).
-2. Calculate Delay Risk, Stagnation Risk, Velocity Risk.
-3. Produce a JSON with: shipping_risk_score (0-1), risk_level
-   (Low/Medium/High/Critical), delay_probability, delay_risk_score,
-   stagnation_risk_score, velocity_risk_score, risk_factors,
-   recommended_actions, shipment_metadata.
+1. Analyze the tracking timeline for delays, stagnation, and velocity anomalies.
+2. Calculate risk scores (0-100) for delay_risk, stagnation_risk, and velocity_risk.
+3. Identify specific risk factors from the data.
+4. Produce concrete, actionable recommendations to mitigate the risks.
 
-Respond strictly as a single JSON object; no prose outside JSON.
-"""
+Return a single JSON object with this exact shape:
+{
+  "shipping_risk_score": <float 0.0-1.0>,
+  "risk_level": <"Low" | "Medium" | "High" | "Critical">,
+  "delay_risk": { "score": <0-100>, "label": <"low"|"medium"|"high"|"critical"> },
+  "stagnation_risk": { "score": <0-100>, "label": <"low"|"medium"|"high"|"critical"> },
+  "velocity_risk": { "score": <0-100>, "label": <"low"|"medium"|"high"|"critical"> },
+  "risk_factors": [<string>, ...],
+  "recommended_actions": [<string>, ...],
+  "shipment_metadata": { <summary of key fields> }
+}
+
+Respond strictly as a single JSON object; no prose outside JSON."""
 
 
-def _tool_get_supplier_details(db: Session, supplier_id: int) -> dict[str, Any]:
-    supplier = (
-        db.query(ShippingSupplier).filter(ShippingSupplier.id == supplier_id).first()
-    )
+def _get_supplier(db: Session, supplier_id: str) -> dict[str, Any] | None:
+    """Fetch supplier details from the suppliers table by UUID."""
+    print(f"\n[ShipmentAgent] DB query — suppliers WHERE id = '{supplier_id}'")
+    supplier = db.query(Supplier).filter(Supplier.id == supplier_id).first()
     if not supplier:
-        return {"error": f"Supplier {supplier_id} not found"}
-    return {
-        "id": supplier.id,
+        print(f"[ShipmentAgent] DB result — supplier NOT FOUND for id='{supplier_id}'")
+        return None
+    result = {
+        "id": str(supplier.id),
         "name": supplier.name,
-        "material_name": supplier.material_name,
-        "origin_city": supplier.location_city,
-        "destination_city": supplier.destination_city,
-        "shipping_mode": supplier.shipping_mode,
-        "distance_km": supplier.distance_km,
-        "avg_transit_days": supplier.avg_transit_days,
+        "location": supplier.location,
+        "city": supplier.city,
+        "country": supplier.country,
+        "region": supplier.region,
+        "commodities": supplier.commodities,
     }
+    print(f"[ShipmentAgent] DB result — supplier found: {json.dumps(result, indent=2)}")
+    return result
 
 
-def _tool_get_shipments_for_supplier(
-    db: Session, supplier_id: int
-) -> list[dict[str, Any]]:
-    shipments = db.query(Shipment).filter(Shipment.supplier_id == supplier_id).all()
-    return [
-        {
-            "id": sh.id,
-            "awb_code": sh.awb_code,
-            "courier_name": sh.courier_name,
-            "origin_city": sh.origin_city,
-            "destination_city": sh.destination_city,
-            "pickup_date": (sh.pickup_date.isoformat() if sh.pickup_date else None),
-            "expected_delivery_date": (
-                sh.expected_delivery_date.isoformat()
-                if sh.expected_delivery_date
-                else None
-            ),
-            "delivered_date": (
-                sh.delivered_date.isoformat() if sh.delivered_date else None
-            ),
-            "current_status": sh.current_status,
-            "weight": sh.weight,
-            "packages": sh.packages,
-        }
-        for sh in shipments
-    ]
+def _get_tracking_for_supplier(supplier_id: str | None) -> list[dict[str, Any]]:
+    """
+    Fetch shipment tracking records from the mock server for a given supplier.
 
+    GET {mock_server_base_url}/mock/shipment-tracking?q=supplier_id:{supplier_id}
+    Returns list of record data dicts. Uses supplier_id to avoid issues with spaces in names.
+    """
+    base_url = settings.mock_server_base_url
+    if not base_url or not (supplier_id or "").strip():
+        logger.debug(
+            "mock_server_base_url not configured or supplier_id empty — skipping tracking fetch"
+        )
+        return []
 
-def _tool_get_shipment_tracking(awb_code: str) -> dict[str, Any]:
-    tracking = get_tracking(awb_code)
-    if tracking is None:
-        return {"error": f"No tracking found for AWB {awb_code}"}
-    return tracking
+    supplier_id_str = (supplier_id or "").strip()
+    url = (
+        f"{base_url.rstrip('/')}/mock/{SHIPMENT_TRACKING_COLLECTION}"
+        f"?q=supplier_id:{supplier_id_str}"
+    )
+    logger.info("Mock server request — GET %s", url)
+    try:
+        resp = httpx.get(url, timeout=5.0)
+        resp.raise_for_status()
+        payload = resp.json()
+        items = payload.get("items") or []
+        records = [item.get("data") or item for item in items]
+        logger.info(
+            "Mock server response — %s tracking record(s) for supplier_id=%s",
+            len(records),
+            supplier_id_str,
+        )
+        return records
+    except Exception as exc:
+        logger.warning("Mock server ERROR for supplier_id=%s: %s", supplier_id_str, exc)
+        return []
 
 
 def analyze_shipments_for_supplier(
-    db: Session, supplier: ShippingSupplier
+    db: Session,
+    scope: OemScope,
 ) -> dict[str, Any]:
-    """Gather supplier/shipment/tracking data; pass to LLM; return JSON."""
+    """Gather supplier/tracking data via DB and mock server; pass to LLM; return JSON."""
+
+    print("\n" + "=" * 60)
+    print("[ShipmentAgent] ▶ analyze_shipments_for_supplier called")
+    print(f"[ShipmentAgent] Scope received from frontend:\n{json.dumps(dict(scope), indent=2)}")
+    print("=" * 60)
+
     client = _build_client()
 
-    supplier_data = _tool_get_supplier_details(db, supplier.id)
-    shipments = _tool_get_shipments_for_supplier(db, supplier.id)
+    supplier_id = scope.get("supplierId")
+    supplier_name = scope.get("supplierName") or ""
 
-    tracking_by_awb: dict[str, Any] = {}
-    for sh in shipments:
-        awb = sh.get("awb_code")
-        if not awb:
-            continue
-        tracking_by_awb[awb] = _tool_get_shipment_tracking(awb)
+    supplier_data: dict[str, Any] = {"name": supplier_name}
+    if supplier_id:
+        supplier_id_str = str(supplier_id).strip()
+        fetched = _get_supplier(db, supplier_id_str)
+        if fetched:
+            supplier_data = fetched
+            supplier_name = supplier_name or fetched.get("name") or ""
+    else:
+        logger.debug("No supplierId in scope — cannot fetch tracking by supplier_id")
+
+    tracking_records = _get_tracking_for_supplier(str(supplier_id).strip() if supplier_id else None)
 
     context = {
+        "oem": {
+            "id": scope.get("oemId"),
+            "name": scope.get("oemName"),
+            "locations": scope.get("locations"),
+            "commodities": scope.get("commodities"),
+        },
         "supplier": supplier_data,
-        "shipments": shipments,
-        "tracking_by_awb": tracking_by_awb,
+        "tracking": tracking_records,
     }
+
+    print(f"\n[ShipmentAgent] LLM context being sent:")
+    print(f"  OEM   : id={context['oem']['id']}  name={context['oem']['name']}")
+    print(f"  Supplier: {json.dumps(supplier_data)}")
+    print(f"  Tracking records: {len(tracking_records)}")
+    print(f"  Tracking records: {json.dumps(tracking_records, indent=2)}")
 
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": json.dumps({"context": context})},
     ]
 
+    print(f"\n[ShipmentAgent] Calling LLM — model={settings.openai_model or 'gpt-4o'}")
+
     response = client.chat.completions.create(
-        model="gpt-4o",
+        model=settings.openai_model or "gpt-4o",
         response_format={"type": "json_object"},
         messages=messages,
     )
 
-    choice = response.choices[0]
-    message = choice.message
-    content = message.content or "{}"
+    content = response.choices[0].message.content or "{}"
+    print(f"\n[ShipmentAgent] LLM raw response:\n{content}")
 
     try:
         data = json.loads(content)
+        print(f"\n[ShipmentAgent] LLM parsed result:\n{json.dumps(data, indent=2)}")
     except json.JSONDecodeError:
+        print("[ShipmentAgent] LLM response was not valid JSON — using fallback")
         data = {
             "shipping_risk_score": 0.5,
             "risk_level": "Medium",
-            "delay_probability": 0.5,
-            "delay_risk_score": None,
-            "stagnation_risk_score": None,
-            "velocity_risk_score": None,
+            "delay_risk": {"score": 50, "label": "medium"},
+            "stagnation_risk": {"score": 50, "label": "medium"},
+            "velocity_risk": {"score": 0, "label": "low"},
             "risk_factors": ["Model returned non-JSON response"],
             "recommended_actions": [content],
             "shipment_metadata": {"context": context},
         }
 
-    data.setdefault("shipment_metadata", context)
+    data.setdefault(
+        "shipment_metadata",
+        {"supplier": supplier_data, "tracking_count": len(tracking_records)},
+    )
+
+    print("\n[ShipmentAgent] ✓ Done — returning result to caller")
+    print("=" * 60 + "\n")
     return data

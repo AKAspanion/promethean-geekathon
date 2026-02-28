@@ -33,7 +33,7 @@ from langgraph.graph import StateGraph, END
 from app.services.agent_types import OemScope
 from app.agents.weather import run_weather_agent_graph
 from app.agents.news import run_news_agent_graph
-from app.agents.shipment import run_shipment_agent_graph
+from app.agents.shipment import run_shipment_risk_graph, shipping_risk_result_to_db_risks
 from app.orchestration.graphs.states import SupplierRiskState
 
 logger = logging.getLogger(__name__)
@@ -136,19 +136,21 @@ async def _run_agents_node(state: SupplierRiskState) -> SupplierRiskState:
     raw_weather = state.get("raw_weather_data") or {}
     raw_news = state.get("raw_news_data") or {}
     raw_global_news = state.get("raw_global_news_data") or {}
-    raw_shipping = state.get("raw_shipping_data") or {}
 
     (
         weather_result,
         news_supplier_result,
         news_global_result,
-        shipping_result,
+        shipping_risk_result,
     ) = await asyncio.gather(
         run_weather_agent_graph(raw_weather, scope),
         run_news_agent_graph(raw_news, scope, context="supplier"),
         run_news_agent_graph(raw_global_news, scope, context="global"),
-        run_shipment_agent_graph(raw_shipping, scope),
+        run_shipment_risk_graph(scope),
     )
+
+    # Convert ShippingRiskResult dict → list of DB-ready risk dicts
+    shipping_result = {"risks": shipping_risk_result_to_db_risks(shipping_risk_result, scope)}
 
     label = scope.get("supplierName") or scope.get("oemName") or "unknown"
 
