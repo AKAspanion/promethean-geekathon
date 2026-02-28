@@ -223,36 +223,40 @@ def _weather_snapshot_to_current_dict(snap: DayWeatherSnapshot) -> dict:
 
 async def _resolve_cities_node(state: WeatherState) -> WeatherState:
     """
-    Extract supplier and OEM city names from the scope.
-    Falls back to DB lookup if cities list is incomplete.
+    Resolve supplier and OEM city names by looking up the DB directly
+    using oemId / supplierId from the scope (same pattern as news agent).
     """
     scope = state["scope"]
     oem_name = scope.get("oemName") or "Unknown OEM"
     supplier_name = scope.get("supplierName") or "Unknown Supplier"
 
-    cities = scope.get("cities") or []
-    # By convention: cities[0] = OEM city, cities[1] = supplier city
-    oem_city = cities[0] if len(cities) > 0 else None
-    supplier_city = cities[1] if len(cities) > 1 else None
+    oem_city: str | None = None
+    supplier_city: str | None = None
 
-    # Fallback: look up from DB if cities not in scope
-    if not oem_city or not supplier_city:
-        db = SessionLocal()
-        try:
-            oem_id_str = scope.get("oemId")
-            supplier_id_str = scope.get("supplierId")
-            if oem_id_str and not oem_city:
-                from uuid import UUID
-                oem_obj = get_oem_by_id(db, UUID(oem_id_str))
-                if oem_obj and oem_obj.city:
-                    oem_city = oem_obj.city
-            if supplier_id_str and not supplier_city:
-                from uuid import UUID
-                sup_obj = get_supplier_by_id(db, UUID(supplier_id_str))
-                if sup_obj and sup_obj.city:
-                    supplier_city = sup_obj.city
-        finally:
-            db.close()
+    db = SessionLocal()
+    try:
+        oem_id_str = scope.get("oemId")
+        supplier_id_str = scope.get("supplierId")
+        if oem_id_str:
+            from uuid import UUID
+            oem_obj = get_oem_by_id(db, UUID(oem_id_str))
+            if oem_obj:
+                oem_city = (
+                    getattr(oem_obj, "city", None)
+                    or getattr(oem_obj, "location", None)
+                    or getattr(oem_obj, "country", None)
+                )
+        if supplier_id_str:
+            from uuid import UUID
+            sup_obj = get_supplier_by_id(db, UUID(supplier_id_str))
+            if sup_obj:
+                supplier_city = (
+                    getattr(sup_obj, "city", None)
+                    or getattr(sup_obj, "location", None)
+                    or getattr(sup_obj, "country", None)
+                )
+    finally:
+        db.close()
 
     if not oem_city or not supplier_city:
         logger.warning(

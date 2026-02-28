@@ -149,10 +149,6 @@ export function AgentStatus() {
 
   if (status?.status !== prevStatus) {
     setPrevStatus(status?.status);
-    if (status?.status === "idle") {
-      setTaskHistory([]);
-      setPrevTask(undefined);
-    }
   }
 
   const currentTask = status?.currentTask;
@@ -229,8 +225,8 @@ export function AgentStatus() {
         </button>
       </div>
 
-      {/* Row 2: Logs — only visible when active */}
-      {isActive && taskHistory.length > 1 && (
+      {/* Row 2: Logs — visible until next trigger */}
+      {taskHistory.length > 1 && (
         <StatusLogFeed history={taskHistory} />
       )}
 
