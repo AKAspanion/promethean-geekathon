@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from app.agents.legacy_weather import run_weather_risk_agent
-from app.agents.shipment_weather import run_shipment_weather_agent
+from app.agents.weather import run_weather_agent
 from app.config import settings
 from app.schemas.weather_agent import (
     HealthResponse,
@@ -92,13 +92,13 @@ async def get_weather_risk(city: str):
 @router.post(
     "/shipment/weather-exposure", response_model=ShipmentWeatherExposureResponse
 )
-async def get_shipment_weather_exposure(body: ShipmentInput):
+async def get_weather_exposure(body: ShipmentInput):
     """
     Analyse weather exposure for a shipment from Supplier to OEM.
     Returns a day-by-day risk timeline and a structured payload for the Risk Analysis Agent.
     """
     try:
-        result = await run_shipment_weather_agent(
+        result = await run_weather_agent(
             supplier_city=body.supplier_city.strip(),
             oem_city=body.oem_city.strip(),
             shipment_start_date=body.shipment_start_date.strip(),

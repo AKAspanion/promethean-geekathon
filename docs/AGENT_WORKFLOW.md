@@ -229,8 +229,8 @@ flowchart TB
 | **Trigger**            | `backend/app/api/routes/agent.py` |
 | **Orchestration**      | `backend/app/orchestration/agent_service.py` |
 | **Data layer**         | `backend/app/data/` (manager.py, base.py, weather.py, news.py, traffic.py, market.py, shipping.py, trends.py, excel.py) |
-| **Domain agents**      | `backend/app/agents/` (weather.py, news.py, shipment.py, legacy_weather.py, shipment_weather.py) |
+| **Domain agents**      | `backend/app/agents/` (weather.py, news.py, shipment.py, legacy_weather.py) |
 | **Persistence / plans** | `backend/app/services/agent_orchestrator.py`, `mitigation_plans.py`, `risks.py`, `opportunities.py` |
 | **Broadcast**          | `backend/app/services/websocket_manager.py` |
 
-Backward compatibility: `app.agent` re-exports `run_weather_risk_agent` and `run_shipment_weather_agent` from `app.agents`.
+Backward compatibility: `app.agent` re-exports `run_weather_risk_agent` and `run_weather_agent` from `app.agents`.

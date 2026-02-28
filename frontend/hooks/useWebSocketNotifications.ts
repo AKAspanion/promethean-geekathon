@@ -25,6 +25,15 @@ type NewsAgentProgressMessage = {
   details?: Record<string, unknown>;
 };
 
+type WeatherAgentProgressMessage = {
+  type: 'weather_agent_progress';
+  step: string;
+  message: string;
+  oemName?: string;
+  supplierName?: string;
+  details?: Record<string, unknown>;
+};
+
 type OemRiskScoreMessage = {
   type: 'oem_risk_score';
   oemId: string;
@@ -35,6 +44,7 @@ type NotificationMessage =
   | AgentStatusMessage
   | SuppliersSnapshotMessage
   | NewsAgentProgressMessage
+  | WeatherAgentProgressMessage
   | OemRiskScoreMessage;
 
 const API_BASE_URL =
@@ -122,6 +132,42 @@ export function useWebSocketNotifications() {
                 currentTask: `${label} ${data.message}`,
                 lastUpdated: new Date().toISOString(),
                 // Update counters when the news agent completes
+                ...(isCompleted && data.details
+                  ? {
+                      risksDetected:
+                        prev.risksDetected +
+                        ((data.details.risks as number) || 0),
+                      opportunitiesIdentified:
+                        prev.opportunitiesIdentified +
+                        ((data.details.opportunities as number) || 0),
+                    }
+                  : {}),
+              };
+            },
+          );
+        }
+
+        if (data.type === 'weather_agent_progress') {
+          console.log('[WS] weather_agent_progress', {
+            step: data.step,
+            message: data.message,
+            supplierName: data.supplierName,
+            oemName: data.oemName,
+            details: data.details,
+          });
+          queryClient.setQueryData<AgentStatus | undefined>(
+            ['agent-status'],
+            (prev) => {
+              if (!prev) return prev;
+              const isCompleted = data.step === 'completed';
+              const label = data.supplierName
+                ? `[Weather - ${data.supplierName}]`
+                : '[Weather]';
+              return {
+                ...prev,
+                status: isCompleted ? 'completed' : 'analyzing',
+                currentTask: `${label} ${data.message}`,
+                lastUpdated: new Date().toISOString(),
                 ...(isCompleted && data.details
                   ? {
                       risksDetected:

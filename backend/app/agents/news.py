@@ -725,7 +725,7 @@ async def run_news_agent_graph(
         db_risk = {
             "title": r["title"],
             "description": r["description"],
-            "severity": r.get("severity", "medium"),
+            "severity": r.get("severity"),
             "affectedRegion": r.get("affectedRegion"),
             "affectedSupplier": r.get("affectedSupplier"),
             "estimatedImpact": r.get("estimatedImpact"),
@@ -743,7 +743,7 @@ async def run_news_agent_graph(
         db_opp = {
             "title": o["title"],
             "description": o["description"],
-            "type": o.get("type", "cost_saving"),
+            "type": o.get("type"),
             "affectedRegion": o.get("affectedRegion"),
             "potentialBenefit": o.get("potentialBenefit"),
             "estimatedValue": o.get("estimatedValue"),

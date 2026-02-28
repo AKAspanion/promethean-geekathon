@@ -63,7 +63,7 @@ from app.models.risk import Risk, RiskStatus
 from app.models.supply_chain_risk_score import SupplyChainRiskScore
 from app.models.supplier_risk_analysis import SupplierRiskAnalysis
 from app.agents.news import run_news_agent_graph
-from app.agents.shipment_weather_graph import run_shipment_weather_graph
+from app.agents.weather import run_weather_graph
 from app.services.agent_types import OemScope
 from app.services.langchain_llm import get_chat_model
 from app.services.llm_client import _persist_llm_log
@@ -810,7 +810,7 @@ async def _process_next_supplier(
     supplier_result, global_result, weather_result = await asyncio.gather(
         run_news_agent_graph({}, scope, context="supplier"),
         run_news_agent_graph({}, scope, context="global"),
-        run_shipment_weather_graph(scope),
+        run_weather_graph(scope),
     )
 
     logger.info(

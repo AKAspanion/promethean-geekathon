@@ -1,226 +1,790 @@
-import json
+"""
+Weather Exposure Graph Agent
+============================
+A LangGraph StateGraph that drives day-by-day weather exposure analysis
+for a shipment route between a supplier city and an OEM city.
+
+Graph structure
+---------------
+
+    START
+      |
+      v
+  [resolve_cities]       <- extract supplier/OEM cities from scope (DB lookup)
+      |
+      v
+  [fetch_forecasts]      <- parallel forecast fetch for supplier + OEM cities
+      |
+      v
+  [build_daily_timeline] <- day-by-day weather + risk via compute_risk()
+      |
+      v
+  [build_exposure_risks] <- convert exposure payload into risk/opportunity dicts
+      |
+      v
+  [llm_summary]          <- optional LLM executive summary
+      |
+      v
+     END
+
+Public entrypoint: ``run_weather_graph(scope)``
+Returns ``{"risks": [...], "opportunities": [...]}`` ready for DB persistence.
+"""
+
+from __future__ import annotations
+
+import asyncio
 import logging
-from typing import TypedDict, Any
+import time
+import uuid as _uuid
+from datetime import date, timedelta
+from typing import TypedDict
 
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END
 
-from app.services.langchain_llm import get_chat_model
-from app.services.agent_orchestrator import _extract_json
+from app.core.risk_engine import compute_risk
+from app.database import SessionLocal
+from app.schemas.weather_agent import (
+    DayRiskSnapshot,
+    DayWeatherSnapshot,
+    RiskLevel,
+    RiskSummary,
+)
 from app.services.agent_types import OemScope
+from app.services.langchain_llm import get_chat_model
+from app.services.llm_client import _persist_llm_log
+from app.services.oems import get_oem_by_id
+from app.services.suppliers import get_by_id as get_supplier_by_id
+from app.services.weather_service import (
+    get_current_weather,
+    get_forecast,
+    get_historical_weather,
+)
+from app.services.websocket_manager import manager as ws_manager
 
 logger = logging.getLogger(__name__)
 
-
-class WeatherItem(TypedDict):
-    city: str
-    country: str
-    temperature: float | int | None
-    condition: str
-    description: str
-    humidity: int | None
-    windSpeed: float | int | None
-    visibility: int | None
+# Default transit days when not determinable from metadata.
+DEFAULT_TRANSIT_DAYS = 7
 
 
-class WeatherAgentState(TypedDict, total=False):
+# ---------------------------------------------------------------------------
+# Broadcast helper
+# ---------------------------------------------------------------------------
+
+async def _broadcast_progress(
+    step: str,
+    message: str,
+    details: dict | None = None,
+    oem_name: str | None = None,
+    supplier_name: str | None = None,
+) -> None:
+    """Broadcast a weather agent progress event over websocket."""
+    payload: dict = {
+        "type": "weather_agent_progress",
+        "step": step,
+        "message": message,
+    }
+    if oem_name:
+        payload["oemName"] = oem_name
+    if supplier_name:
+        payload["supplierName"] = supplier_name
+    if details:
+        payload["details"] = details
+    await ws_manager.broadcast(payload)
+
+
+# ---------------------------------------------------------------------------
+# State definition
+# ---------------------------------------------------------------------------
+
+class WeatherState(TypedDict, total=False):
     scope: OemScope
-    weather_data: dict[str, list[dict]]
-    weather_items: list[WeatherItem]
+
+    # Resolved city names (from DB or scope fallback)
+    supplier_city: str
+    oem_city: str
+    oem_name: str | None
+    supplier_name: str | None
+    transit_days: int
+    shipment_start_date: str  # YYYY-MM-DD
+
+    # Forecast data fetched in parallel
+    supplier_forecast: dict | None
+    oem_forecast: dict | None
+
+    # Day-by-day timeline built from weather data + risk engine
+    day_results: list[dict]  # serialised DayRiskSnapshot dicts
+    exposure_payload: dict  # full risk_analysis_payload
+
+    # Final outputs (DB-ready)
     weather_risks: list[dict]
     weather_opportunities: list[dict]
 
-
-def _build_weather_items_node(state: WeatherAgentState) -> WeatherAgentState:
-    """
-    Normalize raw weather data into WeatherItem structures.
-    """
-    raw = state.get("weather_data") or {}
-    items = raw.get("weather") or []
-
-    normalized: list[WeatherItem] = []
-    for item in items:
-        data = item.get("data") if isinstance(item, dict) else item
-        if not isinstance(data, dict):
-            continue
-        normalized.append(
-            {
-                "city": str(data.get("city") or ""),
-                "country": str(data.get("country") or ""),
-                "temperature": data.get("temperature"),
-                "condition": str(data.get("condition") or ""),
-                "description": str(data.get("description") or ""),
-                "humidity": data.get("humidity"),
-                "windSpeed": data.get("windSpeed"),
-                "visibility": data.get("visibility"),
-            }
-        )
-
-    return {"weather_items": normalized}
+    # Optional LLM summary
+    agent_summary: str | None
 
 
-_prompt: ChatPromptTemplate | None = None
+# ---------------------------------------------------------------------------
+# Waypoint interpolation
+# ---------------------------------------------------------------------------
 
-
-def _get_langchain_chain() -> Any | None:
-    """
-    Build a LangChain chain for weather exposure analysis.
-    Uses Anthropic or Ollama per settings.llm_provider (see langchain_llm.get_chat_model).
-    """
-    global _prompt
-
-    llm = get_chat_model()
-    if llm is None:
-        return None
-
-    if _prompt is None:
-        _prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    (
-                        "You are a Weather Agent for a manufacturing "
-                        "supply chain. You receive normalized weather "
-                        "data for shipment routes and must produce "
-                        "structured weather risk pointers and potential "
-                        "opportunities. Focus on:\n"
-                        "- weather_exposure_score\n"
-                        "- storm_risk\n"
-                        "- temperature_extreme_days\n\n"
-                        "Return ONLY valid JSON, no commentary."
-                    ),
-                ),
-                (
-                    "user",
-                    (
-                        "Analyze the following per-city weather data for "
-                        "supply chain weather risks and opportunities.\n\n"
-                        "Weather JSON:\n{weather_items_json}\n\n"
-                        "Return JSON of shape:\n"
-                        "{{\n"
-                        '  "risks": [\n'
-                        "    {{\n"
-                        '      "title": str,\n'
-                        '      "description": str,\n'
-                        '      "severity": "low" | "medium" | "high" '
-                        '| "critical",\n'
-                        '      "affectedRegion": str | null,\n'
-                        '      "affectedSupplier": str | null,\n'
-                        '      "estimatedImpact": str | null,\n'
-                        '      "estimatedCost": number | null,\n'
-                        '      "weather_exposure_score": number | null,\n'
-                        '      "storm_risk": number | null,\n'
-                        '      "temperature_extreme_days": number | null\n'
-                        "    }}\n"
-                        "  ],\n"
-                        '  "opportunities": [\n'
-                        "    {{\n"
-                        '      "title": str,\n'
-                        '      "description": str,\n'
-                        '      "type": "cost_saving" | "time_saving" '
-                        '| "quality_improvement" | "market_expansion" '
-                        '| "supplier_diversification",\n'
-                        '      "affectedRegion": str | null,\n'
-                        '      "potentialBenefit": str | null,\n'
-                        '      "estimatedValue": number | null\n'
-                        "    }}\n"
-                        "  ]\n"
-                        "}}\n"
-                        "If none, use empty arrays."
-                    ),
-                ),
-            ]
-        )
-
-    return _prompt | llm
-
-
-def _heuristic_weather_from_items(
-    items: list[WeatherItem],
-) -> tuple[list[dict], list[dict]]:
-    """
-    Simple deterministic fallback when LLM is not configured.
-    """
-    risks: list[dict] = []
-    opps: list[dict] = []
-
-    for item in items:
-        city = item["city"] or "Unknown city"
-        temp = item.get("temperature") or 0
-        condition = (item.get("condition") or "").lower()
-
-        exposure = 0
-        storm_risk = 0
-        extreme_days = 0
-
-        if condition in {"storm", "rain"}:
-            exposure += 40
-            storm_risk = 70 if condition == "storm" else 40
-        if temp <= 0 or temp >= 35:
-            exposure += 30
-            extreme_days = 2
-
-        if exposure >= 40:
-            risks.append(
-                {
-                    "title": f"Weather risk for {city}",
-                    "description": (
-                        f"Adverse weather in {city} with condition "
-                        f"{item.get('condition')} and temperature {temp}°C."
-                    ),
-                    "severity": "high" if exposure >= 70 else "medium",
-                    "affectedRegion": city,
-                    "affectedSupplier": None,
-                    "estimatedImpact": (
-                        "Potential delays due to local weather conditions."
-                    ),
-                    "estimatedCost": None,
-                    "weather_exposure_score": exposure,
-                    "storm_risk": storm_risk,
-                    "temperature_extreme_days": extreme_days,
-                }
-            )
+def _interpolate_waypoints(supplier: str, oem: str, transit_days: int) -> list[str]:
+    locations = []
+    for i in range(transit_days):
+        if i == 0:
+            locations.append(supplier)
+        elif i == transit_days - 1:
+            locations.append(oem)
         else:
-            opps.append(
-                {
-                    "title": f"Stable weather window in {city}",
-                    "description": (
-                        f"Weather in {city} appears stable for planned "
-                        f"shipments with condition {item.get('condition')}."
-                    ),
-                    "type": "time_saving",
-                    "affectedRegion": city,
-                    "potentialBenefit": (
-                        "Opportunity to prioritize shipments through this "
-                        "location while conditions are favorable."
-                    ),
-                    "estimatedValue": None,
-                }
-            )
-
-    return risks, opps
+            midpoint = transit_days // 2
+            city = supplier if i < midpoint else oem
+            locations.append(city)
+    return locations
 
 
-async def _weather_risk_llm_node(
-    state: WeatherAgentState,
-) -> WeatherAgentState:
+# ---------------------------------------------------------------------------
+# Weather snapshot helpers
+# ---------------------------------------------------------------------------
+
+def _extract_day_weather_from_forecast(
+    forecast_data: dict, target_date: str, day_number: int,
+    location_label: str, city_used: str,
+) -> DayWeatherSnapshot | None:
+    try:
+        forecast_days = forecast_data.get("forecast", {}).get("forecastday", [])
+        for fd in forecast_days:
+            if fd.get("date") == target_date:
+                day = fd.get("day", {})
+                cond = day.get("condition", {})
+                return DayWeatherSnapshot(
+                    date=target_date, day_number=day_number,
+                    location_name=location_label, estimated_location=city_used,
+                    condition=cond.get("text", "Unknown"),
+                    temp_c=float(day.get("avgtemp_c", 0)),
+                    min_temp_c=float(day.get("mintemp_c", 0)),
+                    max_temp_c=float(day.get("maxtemp_c", 0)),
+                    wind_kph=float(day.get("maxwind_kph", 0)),
+                    precip_mm=float(day.get("totalprecip_mm", 0)),
+                    vis_km=float(day.get("avgvis_km", 10)),
+                    humidity=int(day.get("avghumidity", 50)),
+                    is_historical=False,
+                )
+    except Exception as e:
+        logger.warning("Failed to extract forecast day for %s: %s", target_date, e)
+    return None
+
+
+def _extract_day_weather_from_history(
+    hist_data: dict, target_date: str, day_number: int,
+    location_label: str, city_used: str,
+) -> DayWeatherSnapshot | None:
+    try:
+        forecast_days = hist_data.get("forecast", {}).get("forecastday", [])
+        for fd in forecast_days:
+            if fd.get("date") == target_date:
+                day = fd.get("day", {})
+                cond = day.get("condition", {})
+                return DayWeatherSnapshot(
+                    date=target_date, day_number=day_number,
+                    location_name=location_label, estimated_location=city_used,
+                    condition=cond.get("text", "Unknown"),
+                    temp_c=float(day.get("avgtemp_c", 0)),
+                    min_temp_c=float(day.get("mintemp_c", 0)),
+                    max_temp_c=float(day.get("maxtemp_c", 0)),
+                    wind_kph=float(day.get("maxwind_kph", 0)),
+                    precip_mm=float(day.get("totalprecip_mm", 0)),
+                    vis_km=float(day.get("avgvis_km", 10)),
+                    humidity=int(day.get("avghumidity", 50)),
+                    is_historical=True,
+                )
+    except Exception as e:
+        logger.warning("Failed to extract history day for %s: %s", target_date, e)
+    return None
+
+
+def _weather_snapshot_to_current_dict(snap: DayWeatherSnapshot) -> dict:
+    return {
+        "temp_c": snap.temp_c,
+        "feelslike_c": snap.temp_c,
+        "wind_kph": snap.wind_kph,
+        "gust_kph": snap.wind_kph * 1.3,
+        "precip_mm": snap.precip_mm,
+        "vis_km": snap.vis_km,
+        "humidity": snap.humidity,
+        "condition": {"code": 1000, "text": snap.condition},
+    }
+
+
+# ---------------------------------------------------------------------------
+# Node 1: Resolve cities from scope / DB
+# ---------------------------------------------------------------------------
+
+async def _resolve_cities_node(state: WeatherState) -> WeatherState:
     """
-    Convert WeatherItem list into risks and opportunities using LangChain.
-    Falls back to simple heuristics when Anthropic is not configured.
+    Extract supplier and OEM city names from the scope.
+    Falls back to DB lookup if cities list is incomplete.
     """
-    items = state.get("weather_items") or []
-    if not items:
-        return {"weather_risks": [], "weather_opportunities": []}
+    scope = state["scope"]
+    oem_name = scope.get("oemName") or "Unknown OEM"
+    supplier_name = scope.get("supplierName") or "Unknown Supplier"
 
-    chain = _get_langchain_chain()
-    if not chain:
-        risks, opps = _heuristic_weather_from_items(items)
-        return {"weather_risks": risks, "weather_opportunities": opps}
+    cities = scope.get("cities") or []
+    # By convention: cities[0] = OEM city, cities[1] = supplier city
+    oem_city = cities[0] if len(cities) > 0 else None
+    supplier_city = cities[1] if len(cities) > 1 else None
+
+    # Fallback: look up from DB if cities not in scope
+    if not oem_city or not supplier_city:
+        db = SessionLocal()
+        try:
+            oem_id_str = scope.get("oemId")
+            supplier_id_str = scope.get("supplierId")
+            if oem_id_str and not oem_city:
+                from uuid import UUID
+                oem_obj = get_oem_by_id(db, UUID(oem_id_str))
+                if oem_obj and oem_obj.city:
+                    oem_city = oem_obj.city
+            if supplier_id_str and not supplier_city:
+                from uuid import UUID
+                sup_obj = get_supplier_by_id(db, UUID(supplier_id_str))
+                if sup_obj and sup_obj.city:
+                    supplier_city = sup_obj.city
+        finally:
+            db.close()
+
+    if not oem_city or not supplier_city:
+        logger.warning(
+            "[WeatherGraph] Cannot resolve cities (oem=%s, supplier=%s) — skipping weather analysis",
+            oem_city, supplier_city,
+        )
+        await _broadcast_progress(
+            "resolve_cities_skipped",
+            "Cannot resolve supplier/OEM cities — skipping weather analysis",
+            oem_name=oem_name, supplier_name=supplier_name,
+        )
+        return {
+            "supplier_city": "",
+            "oem_city": "",
+            "oem_name": oem_name,
+            "supplier_name": supplier_name,
+            "transit_days": 0,
+            "shipment_start_date": date.today().strftime("%Y-%m-%d"),
+        }
+
+    # Honour pre-set values (e.g. from run_weather_agent compat wrapper),
+    # otherwise fall back to defaults.
+    transit_days = state.get("transit_days") or DEFAULT_TRANSIT_DAYS
+    shipment_start_date = state.get("shipment_start_date") or date.today().strftime("%Y-%m-%d")
+
+    logger.info(
+        "[WeatherGraph] Resolved cities: supplier=%s oem=%s transit=%d start=%s",
+        supplier_city, oem_city, transit_days, shipment_start_date,
+    )
+    await _broadcast_progress(
+        "resolve_cities",
+        f"Route: {supplier_city} -> {oem_city} ({transit_days} days)",
+        {"supplier_city": supplier_city, "oem_city": oem_city, "transit_days": transit_days},
+        oem_name=oem_name, supplier_name=supplier_name,
+    )
+
+    return {
+        "supplier_city": supplier_city,
+        "oem_city": oem_city,
+        "oem_name": oem_name,
+        "supplier_name": supplier_name,
+        "transit_days": transit_days,
+        "shipment_start_date": shipment_start_date,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Node 2: Fetch forecasts in parallel
+# ---------------------------------------------------------------------------
+
+async def _fetch_forecasts_node(state: WeatherState) -> WeatherState:
+    """Fetch weather forecasts for both supplier and OEM cities in parallel."""
+    supplier_city = state["supplier_city"]
+    oem_city = state["oem_city"]
+    transit_days = state.get("transit_days", DEFAULT_TRANSIT_DAYS)
+    oem_name = state.get("oem_name")
+    supplier_name = state.get("supplier_name")
+
+    if not supplier_city or not oem_city:
+        logger.info("[WeatherGraph] Cities not resolved — skipping forecast fetch")
+        return {"supplier_forecast": None, "oem_forecast": None}
+
+    today = date.today()
+    start_date = date.today()  # shipment starts today
+    forecast_days_needed = max(0, (start_date + timedelta(days=transit_days - 1) - today).days + 1)
+    forecast_days_needed = min(forecast_days_needed + 1, 14)
+
+    logger.info(
+        "[WeatherGraph] Fetching forecasts: supplier=%s oem=%s days=%d",
+        supplier_city, oem_city, forecast_days_needed,
+    )
+    await _broadcast_progress(
+        "fetch_forecasts",
+        f"Fetching weather forecasts for {supplier_city} and {oem_city}",
+        {"forecast_days": forecast_days_needed},
+        oem_name=oem_name, supplier_name=supplier_name,
+    )
 
     try:
-        items_json = json.dumps(items, indent=2)
-        msg = await chain.ainvoke({"weather_items_json": items_json})
+        supplier_forecast, oem_forecast = await asyncio.gather(
+            get_forecast(supplier_city, days=forecast_days_needed),
+            get_forecast(oem_city, days=forecast_days_needed),
+        )
+        logger.info(
+            "[WeatherGraph] Forecasts fetched: supplier=%s oem=%s",
+            "ok" if supplier_forecast else "empty",
+            "ok" if oem_forecast else "empty",
+        )
+        await _broadcast_progress(
+            "fetch_forecasts_done",
+            f"Weather forecasts retrieved for both cities",
+            oem_name=oem_name, supplier_name=supplier_name,
+        )
+    except Exception as exc:
+        logger.exception("[WeatherGraph] Forecast fetch error: %s", exc)
+        await _broadcast_progress(
+            "fetch_forecasts_error", f"Forecast fetch error: {exc}",
+            oem_name=oem_name, supplier_name=supplier_name,
+        )
+        supplier_forecast, oem_forecast = None, None
 
+    return {
+        "supplier_forecast": supplier_forecast,
+        "oem_forecast": oem_forecast,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Node 3: Build daily timeline with risk scores
+# ---------------------------------------------------------------------------
+
+async def _build_daily_timeline_node(state: WeatherState) -> WeatherState:
+    """
+    Build a day-by-day weather timeline with per-day risk scores.
+    Uses current weather for today, historical for past, forecast for future.
+    """
+    supplier_city = state["supplier_city"]
+    oem_city = state["oem_city"]
+    transit_days = state.get("transit_days", DEFAULT_TRANSIT_DAYS)
+    shipment_start_date = state.get("shipment_start_date", date.today().strftime("%Y-%m-%d"))
+    supplier_forecast = state.get("supplier_forecast")
+    oem_forecast = state.get("oem_forecast")
+    oem_name = state.get("oem_name")
+    supplier_name = state.get("supplier_name")
+
+    today = date.today()
+    start_date = date.fromisoformat(shipment_start_date)
+    waypoints = _interpolate_waypoints(supplier_city, oem_city, transit_days)
+
+    await _broadcast_progress(
+        "build_timeline",
+        f"Analyzing {transit_days}-day weather timeline",
+        {"transit_days": transit_days},
+        oem_name=oem_name, supplier_name=supplier_name,
+    )
+
+    day_results: list[DayRiskSnapshot] = []
+
+    for i, waypoint_city in enumerate(waypoints):
+        day_number = i + 1
+        target_date = start_date + timedelta(days=i)
+        target_date_str = target_date.strftime("%Y-%m-%d")
+
+        is_past = target_date < today
+        is_today = target_date == today
+
+        location_label = (
+            f"{supplier_city} (Origin)" if i == 0
+            else f"{oem_city} (Destination)" if i == transit_days - 1
+            else f"In Transit - Day {day_number}"
+        )
+
+        weather_snap: DayWeatherSnapshot | None = None
+        city_used = waypoint_city
+
+        if is_today:
+            raw = await get_current_weather(waypoint_city)
+            if raw:
+                current = raw.get("current", {})
+                cond = current.get("condition", {})
+                weather_snap = DayWeatherSnapshot(
+                    date=target_date_str, day_number=day_number,
+                    location_name=location_label, estimated_location=city_used,
+                    condition=cond.get("text", "Unknown"),
+                    temp_c=float(current.get("temp_c", 0)),
+                    min_temp_c=None, max_temp_c=None,
+                    wind_kph=float(current.get("wind_kph", 0)),
+                    precip_mm=float(current.get("precip_mm", 0)),
+                    vis_km=float(current.get("vis_km", 10)),
+                    humidity=int(current.get("humidity", 50)),
+                    is_historical=False,
+                )
+        elif is_past:
+            hist_data = await get_historical_weather(waypoint_city, target_date_str)
+            if hist_data:
+                weather_snap = _extract_day_weather_from_history(
+                    hist_data, target_date_str, day_number, location_label, city_used,
+                )
+        else:
+            midpoint = transit_days // 2
+            forecast_data = supplier_forecast if i < midpoint else oem_forecast
+            if forecast_data:
+                weather_snap = _extract_day_weather_from_forecast(
+                    forecast_data, target_date_str, day_number, location_label, city_used,
+                )
+            if not weather_snap:
+                fresh_forecast = await get_forecast(waypoint_city, days=14)
+                if fresh_forecast:
+                    weather_snap = _extract_day_weather_from_forecast(
+                        fresh_forecast, target_date_str, day_number, location_label, city_used,
+                    )
+
+        if not weather_snap:
+            logger.warning(
+                "[WeatherGraph] No weather data for day %d (%s) at %s — skipping",
+                day_number, target_date_str, city_used,
+            )
+            continue
+
+        current_dict = _weather_snapshot_to_current_dict(weather_snap)
+        risk_raw = compute_risk({"current": current_dict})
+        factors_serialized = [
+            f.model_dump() if hasattr(f, "model_dump") else f
+            for f in risk_raw.get("factors", [])
+        ]
+        risk_dict_serialized = {**risk_raw, "factors": factors_serialized}
+        if hasattr(risk_dict_serialized.get("overall_level"), "value"):
+            risk_dict_serialized["overall_level"] = risk_dict_serialized["overall_level"].value
+        for f in risk_dict_serialized["factors"]:
+            if hasattr(f.get("level"), "value"):
+                f["level"] = f["level"].value
+
+        risk_summary = RiskSummary(**risk_dict_serialized)
+
+        concern_text = (
+            risk_summary.primary_concerns[0]
+            if risk_summary.primary_concerns
+            else "No significant risk"
+        )
+        risk_summary_text = (
+            f"Day {day_number} ({target_date_str}): {location_label} — "
+            f"{weather_snap.condition}, {weather_snap.temp_c:.1f}C, wind {weather_snap.wind_kph:.0f} km/h. "
+            f"Risk: {risk_summary.overall_level} ({risk_summary.overall_score:.0f}/100). {concern_text}"
+        )
+
+        day_results.append(
+            DayRiskSnapshot(
+                date=target_date_str, day_number=day_number,
+                location_name=location_label, weather=weather_snap,
+                risk=risk_summary, risk_summary_text=risk_summary_text,
+            )
+        )
+
+    # Build exposure payload
+    all_scores = [d.risk.overall_score for d in day_results]
+    avg_score = sum(all_scores) / len(all_scores) if all_scores else 0
+    max_score = max(all_scores) if all_scores else 0
+    exposure_score = round(max_score * 0.5 + avg_score * 0.5, 1) if all_scores else 0.0
+
+    peak_risk_day = max(day_results, key=lambda d: d.risk.overall_score) if day_results else None
+    high_risk_days = [
+        d for d in day_results
+        if d.risk.overall_level in (RiskLevel.HIGH, RiskLevel.CRITICAL)
+    ]
+
+    factor_names = ["transportation", "power_outage", "production", "port_and_route", "raw_material_delay"]
+    factor_max_scores: dict[str, float] = {f: 0.0 for f in factor_names}
+    for d in day_results:
+        for factor in d.risk.factors:
+            fn = factor.factor
+            if fn in factor_max_scores:
+                factor_max_scores[fn] = max(factor_max_scores[fn], factor.score)
+
+    all_concerns: list[str] = []
+    all_actions: list[str] = []
+    for d in day_results:
+        all_concerns.extend(d.risk.primary_concerns)
+        all_actions.extend(d.risk.suggested_actions)
+
+    exposure_payload = {
+        "shipment_metadata": {
+            "supplier_city": supplier_city,
+            "oem_city": oem_city,
+            "start_date": shipment_start_date,
+            "transit_days": transit_days,
+        },
+        "exposure_summary": {
+            "average_risk_score": round(avg_score, 1),
+            "peak_risk_score": round(peak_risk_day.risk.overall_score, 1) if peak_risk_day else 0,
+            "peak_risk_day": peak_risk_day.day_number if peak_risk_day else None,
+            "peak_risk_date": peak_risk_day.date if peak_risk_day else None,
+            "high_risk_day_count": len(high_risk_days),
+            "high_risk_dates": [d.date for d in high_risk_days],
+            "overall_exposure_score": exposure_score,
+        },
+        "risk_factors_max": factor_max_scores,
+        "primary_concerns": list(dict.fromkeys(all_concerns))[:6],
+        "recommended_actions": list(dict.fromkeys(all_actions))[:6],
+        "daily_timeline": [
+            {
+                "day": d.day_number, "date": d.date,
+                "location": d.location_name,
+                "is_historical": d.weather.is_historical,
+                "weather": {
+                    "condition": d.weather.condition,
+                    "temp_c": d.weather.temp_c,
+                    "wind_kph": d.weather.wind_kph,
+                    "precip_mm": d.weather.precip_mm,
+                    "vis_km": d.weather.vis_km,
+                    "humidity": d.weather.humidity,
+                },
+                "risk_score": d.risk.overall_score,
+                "risk_level": d.risk.overall_level,
+                "key_concern": d.risk.primary_concerns[0] if d.risk.primary_concerns else "No significant risk",
+            }
+            for d in day_results
+        ],
+    }
+
+    # Serialize day_results for state transport
+    day_results_dicts = [d.model_dump() for d in day_results]
+
+    logger.info(
+        "[WeatherGraph] Timeline built: %d days, exposure_score=%.1f, high_risk_days=%d",
+        len(day_results), exposure_score, len(high_risk_days),
+    )
+    await _broadcast_progress(
+        "timeline_built",
+        f"Weather timeline: {len(day_results)} days analyzed, exposure score {exposure_score:.0f}/100",
+        {
+            "transit_days": transit_days,
+            "exposure_score": exposure_score,
+            "high_risk_days": len(high_risk_days),
+        },
+        oem_name=state.get("oem_name"), supplier_name=state.get("supplier_name"),
+    )
+
+    return {
+        "day_results": day_results_dicts,
+        "exposure_payload": exposure_payload,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Node 4: Build risk/opportunity dicts from exposure data
+# ---------------------------------------------------------------------------
+
+async def _build_exposure_risks_node(state: WeatherState) -> WeatherState:
+    """
+    Convert the exposure payload into structured risk and opportunity dicts
+    ready for DB persistence.
+    """
+    payload = state.get("exposure_payload") or {}
+
+    if not payload.get("daily_timeline"):
+        logger.info("[WeatherGraph] No timeline data — skipping risk/opportunity generation")
+        return {"weather_risks": [], "weather_opportunities": []}
+
+    summary = payload.get("exposure_summary") or {}
+    supplier_city = state.get("supplier_city", "Unknown")
+    oem_city = state.get("oem_city", "Unknown")
+    oem_name = state.get("oem_name")
+    supplier_name = state.get("supplier_name")
+
+    exposure_score = summary.get("overall_exposure_score", 0)
+    peak_score = summary.get("peak_risk_score", 0)
+    high_risk_count = summary.get("high_risk_day_count", 0)
+    peak_day = summary.get("peak_risk_day")
+    peak_date = summary.get("peak_risk_date")
+    concerns = payload.get("primary_concerns") or []
+    actions = payload.get("recommended_actions") or []
+
+    risks: list[dict] = []
+    opportunities: list[dict] = []
+
+    # Determine severity from exposure score
+    if exposure_score >= 75:
+        severity = "critical"
+    elif exposure_score >= 50:
+        severity = "high"
+    elif exposure_score >= 25:
+        severity = "medium"
+    else:
+        severity = "low"
+
+    if exposure_score > 10:
+        concern_text = "; ".join(concerns[:3]) if concerns else "Weather exposure along transit route"
+        action_text = "; ".join(actions[:3]) if actions else "Monitor weather conditions"
+
+        risks.append({
+            "title": f"Weather exposure on {supplier_city} to {oem_city} route",
+            "description": (
+                f"Shipment route from {supplier_city} to {oem_city} has "
+                f"an overall weather exposure score of {exposure_score:.0f}/100. "
+                f"Peak risk of {peak_score:.0f}/100 on Day {peak_day} ({peak_date}). "
+                f"{high_risk_count} high/critical risk day(s) identified. "
+                f"Key concerns: {concern_text}."
+            ),
+            "severity": severity,
+            "affectedRegion": f"{supplier_city} - {oem_city}",
+            "affectedSupplier": supplier_name,
+            "estimatedImpact": action_text,
+            "estimatedCost": None,
+            "sourceType": "weather",
+            "sourceData": {
+                "weatherExposure": {
+                    "weather_exposure_score": exposure_score,
+                    "peak_risk_score": peak_score,
+                    "peak_risk_day": peak_day,
+                    "high_risk_day_count": high_risk_count,
+                    "route": f"{supplier_city} -> {oem_city}",
+                },
+                "risk_factors_max": payload.get("risk_factors_max", {}),
+            },
+        })
+
+        # Add per-day risks for high/critical days
+        for day_entry in (payload.get("daily_timeline") or []):
+            day_score = day_entry.get("risk_score", 0)
+            day_level = day_entry.get("risk_level", "low")
+            if isinstance(day_level, RiskLevel):
+                day_level = day_level.value
+            if day_level in ("high", "critical"):
+                risks.append({
+                    "title": f"High weather risk on Day {day_entry['day']} ({day_entry['date']})",
+                    "description": (
+                        f"Weather at {day_entry['location']}: {day_entry['weather']['condition']}, "
+                        f"{day_entry['weather']['temp_c']}C, wind {day_entry['weather']['wind_kph']} km/h. "
+                        f"Risk score: {day_score:.0f}/100. {day_entry.get('key_concern', '')}"
+                    ),
+                    "severity": "critical" if day_score >= 75 else "high",
+                    "affectedRegion": day_entry["location"],
+                    "affectedSupplier": supplier_name,
+                    "estimatedImpact": f"Potential delay on transit day {day_entry['day']}",
+                    "estimatedCost": None,
+                    "sourceType": "weather",
+                    "sourceData": {
+                        "weatherExposure": {
+                            "weather_exposure_score": day_score,
+                            "day_number": day_entry["day"],
+                            "date": day_entry["date"],
+                            "location": day_entry["location"],
+                        },
+                    },
+                })
+    else:
+        opportunities.append({
+            "title": f"Favorable weather window for {supplier_city} to {oem_city} route",
+            "description": (
+                f"Weather conditions along the {supplier_city} to {oem_city} "
+                f"transit route appear stable with low exposure score of {exposure_score:.0f}/100."
+            ),
+            "type": "time_saving",
+            "affectedRegion": f"{supplier_city} - {oem_city}",
+            "potentialBenefit": "Opportunity to prioritize shipments while conditions are favorable.",
+            "estimatedValue": None,
+            "sourceType": "weather",
+            "sourceData": {
+                "weatherExposure": {
+                    "weather_exposure_score": exposure_score,
+                    "route": f"{supplier_city} -> {oem_city}",
+                },
+            },
+        })
+
+    logger.info(
+        "[WeatherGraph] Exposure risks built: risks=%d opportunities=%d",
+        len(risks), len(opportunities),
+    )
+    await _broadcast_progress(
+        "exposure_risks_built",
+        f"Weather analysis: {len(risks)} risks, {len(opportunities)} opportunities",
+        {"risks": len(risks), "opportunities": len(opportunities)},
+        oem_name=oem_name, supplier_name=supplier_name,
+    )
+
+    return {
+        "weather_risks": risks,
+        "weather_opportunities": opportunities,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Node 5: LLM summary (optional, with fallback)
+# ---------------------------------------------------------------------------
+
+_SUMMARY_PROMPT = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        "You are a supply chain risk analyst specializing in weather-related transit risks.",
+    ),
+    (
+        "user",
+        (
+            "A shipment is travelling from {supplier_city} to {oem_city} "
+            "over {transit_days} days starting {start_date}.\n\n"
+            "Exposure summary:\n{exposure_json}\n\n"
+            "Write a concise executive summary (3-5 sentences) for an OEM operations manager: "
+            "highlight the worst weather windows, which days/legs are most exposed, "
+            "and top 2-3 mitigation actions. Keep it under 400 characters."
+        ),
+    ),
+])
+
+
+async def _llm_summary_node(state: WeatherState) -> WeatherState:
+    """Generate an optional LLM executive summary for the weather exposure."""
+    payload = state.get("exposure_payload") or {}
+    supplier_city = state.get("supplier_city", "Unknown")
+    oem_city = state.get("oem_city", "Unknown")
+    transit_days = state.get("transit_days", DEFAULT_TRANSIT_DAYS)
+    start_date = state.get("shipment_start_date", "")
+    oem_name = state.get("oem_name")
+    supplier_name = state.get("supplier_name")
+
+    import json
+    exposure_json = json.dumps(payload.get("exposure_summary", {}), indent=2)
+
+    llm = get_chat_model()
+    if not llm:
+        logger.info("[WeatherGraph] LLM unavailable — no summary generated")
+        return {"agent_summary": None}
+
+    provider = getattr(llm, "model_provider", None) or type(llm).__name__
+    model_name = getattr(llm, "model_name", None) or getattr(llm, "model", "unknown")
+    call_id = _uuid.uuid4().hex[:8]
+    start = time.perf_counter()
+
+    prompt_text = _SUMMARY_PROMPT.format(
+        supplier_city=supplier_city, oem_city=oem_city,
+        transit_days=transit_days, start_date=start_date,
+        exposure_json=exposure_json,
+    )
+
+    try:
+        await _broadcast_progress(
+            "llm_summary_start",
+            f"Generating weather risk summary via {provider}",
+            {"provider": provider, "model": str(model_name)},
+            oem_name=oem_name, supplier_name=supplier_name,
+        )
+
+        chain = _SUMMARY_PROMPT | llm
+        msg = await chain.ainvoke({
+            "supplier_city": supplier_city,
+            "oem_city": oem_city,
+            "transit_days": str(transit_days),
+            "start_date": start_date,
+            "exposure_json": exposure_json,
+        })
+
+        elapsed = int((time.perf_counter() - start) * 1000)
         content = msg.content
         if isinstance(content, str):
             raw_text = content
@@ -233,46 +797,304 @@ async def _weather_risk_llm_node(
                     parts.append(str(block))
             raw_text = "".join(parts)
 
-        parsed = _extract_json(raw_text) or {}
-        raw_risks = parsed.get("risks") or []
-        raw_opps = parsed.get("opportunities") or []
+        logger.info(
+            "[WeatherGraph] LLM summary id=%s provider=%s elapsed_ms=%d len=%d",
+            call_id, provider, elapsed, len(raw_text),
+        )
+        _persist_llm_log(
+            call_id, provider, str(model_name),
+            prompt_text, raw_text, "success", elapsed, None,
+        )
 
-        risks: list[dict] = []
-        opps: list[dict] = []
+        summary = raw_text.strip() or None
 
-        for r in raw_risks:
-            if not isinstance(r, dict):
-                continue
-            title = (str(r.get("title") or "")).strip()
-            desc = (str(r.get("description") or "")).strip()
-            if not title or not desc:
-                continue
-            risks.append(r)
+        await _broadcast_progress(
+            "llm_summary_done",
+            "Weather risk summary generated",
+            {"elapsed_ms": elapsed},
+            oem_name=oem_name, supplier_name=supplier_name,
+        )
 
-        for o in raw_opps:
-            if not isinstance(o, dict):
-                continue
-            title = (str(o.get("title") or "")).strip()
-            desc = (str(o.get("description") or "")).strip()
-            if not title or not desc:
-                continue
-            opps.append(o)
+        return {"agent_summary": summary}
 
-        return {"weather_risks": risks, "weather_opportunities": opps}
     except Exception as exc:
-        logger.exception("WeatherAgent LLM error: %s", exc)
-        risks, opps = _heuristic_weather_from_items(items)
-        return {"weather_risks": risks, "weather_opportunities": opps}
+        elapsed = int((time.perf_counter() - start) * 1000)
+        logger.exception("[WeatherGraph] LLM summary error: %s", exc)
+        _persist_llm_log(
+            call_id, provider, str(model_name),
+            prompt_text, None, "error", elapsed, str(exc),
+        )
+        await _broadcast_progress(
+            "llm_summary_error", f"LLM summary failed: {exc}",
+            oem_name=oem_name, supplier_name=supplier_name,
+        )
+        return {"agent_summary": None}
 
 
-_builder = StateGraph(WeatherAgentState)
-_builder.add_node("build_items", _build_weather_items_node)
-_builder.add_node("weather_risk_llm", _weather_risk_llm_node)
-_builder.set_entry_point("build_items")
-_builder.add_edge("build_items", "weather_risk_llm")
-_builder.add_edge("weather_risk_llm", END)
+# ---------------------------------------------------------------------------
+# Graph definition
+# ---------------------------------------------------------------------------
+
+_builder = StateGraph(WeatherState)
+
+_builder.add_node("resolve_cities", _resolve_cities_node)
+_builder.add_node("fetch_forecasts", _fetch_forecasts_node)
+_builder.add_node("build_daily_timeline", _build_daily_timeline_node)
+_builder.add_node("build_exposure_risks", _build_exposure_risks_node)
+_builder.add_node("llm_summary", _llm_summary_node)
+
+_builder.set_entry_point("resolve_cities")
+_builder.add_edge("resolve_cities", "fetch_forecasts")
+_builder.add_edge("fetch_forecasts", "build_daily_timeline")
+_builder.add_edge("build_daily_timeline", "build_exposure_risks")
+_builder.add_edge("build_exposure_risks", "llm_summary")
+_builder.add_edge("llm_summary", END)
 
 WEATHER_GRAPH = _builder.compile()
+
+
+# ---------------------------------------------------------------------------
+# Public entrypoint
+# ---------------------------------------------------------------------------
+
+async def run_weather_graph(
+    scope: OemScope,
+) -> dict[str, list[dict]]:
+    """
+    Orchestrate the Weather Exposure Agent using LangGraph.
+
+    Resolves supplier/OEM cities from scope, fetches weather forecasts,
+    builds a day-by-day risk timeline, and produces structured risks
+    and opportunities ready for DB persistence.
+
+    Returns ``{"risks": [...], "opportunities": [...]}``
+    """
+    oem_label = scope.get("oemName") or "unknown"
+    supplier_label = scope.get("supplierName") or "unknown"
+    entity_label = f"{oem_label}/{supplier_label}"
+
+    logger.info("[WeatherGraph] Starting for %s", entity_label)
+    await _broadcast_progress(
+        "started",
+        f"Starting weather analysis for {entity_label}",
+        {"oem": oem_label, "supplier": supplier_label},
+        oem_name=oem_label, supplier_name=supplier_label,
+    )
+
+    initial_state: WeatherState = {
+        "scope": scope,
+    }
+
+    final_state = await WEATHER_GRAPH.ainvoke(initial_state)
+
+    risks = final_state.get("weather_risks") or []
+    opps = final_state.get("weather_opportunities") or []
+
+    logger.info(
+        "[WeatherGraph] Completed for %s: risks=%d opportunities=%d",
+        entity_label, len(risks), len(opps),
+    )
+    await _broadcast_progress(
+        "completed",
+        f"Weather analysis complete: {len(risks)} risks, {len(opps)} opportunities",
+        {"risks": len(risks), "opportunities": len(opps)},
+        oem_name=oem_label, supplier_name=supplier_label,
+    )
+
+    return {"risks": risks, "opportunities": opps}
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat: run_weather_agent (used by REST API route)
+# ---------------------------------------------------------------------------
+
+async def run_weather_agent(
+    supplier_city: str,
+    oem_city: str,
+    shipment_start_date: str,
+    transit_days: int,
+) -> "ShipmentWeatherExposureResponse":
+    """
+    Backward-compatible wrapper for the ``/shipment/weather-exposure`` API route.
+
+    Builds an OemScope from the explicit parameters, invokes the graph, and
+    converts the final state into a ``ShipmentWeatherExposureResponse``.
+    """
+    from app.schemas.weather_agent import ShipmentWeatherExposureResponse
+
+    scope: OemScope = {
+        "oemId": "",
+        "oemName": "",
+        "supplierNames": [],
+        "locations": [],
+        "cities": [oem_city, supplier_city],
+        "countries": [],
+        "regions": [],
+        "commodities": [],
+        "supplierId": "",
+        "supplierName": "",
+    }
+
+    initial_state: WeatherState = {
+        "scope": scope,
+        "transit_days": transit_days,
+        "shipment_start_date": shipment_start_date,
+    }
+
+    final_state = await WEATHER_GRAPH.ainvoke(initial_state)
+
+    day_dicts = final_state.get("day_results") or []
+    days = [DayRiskSnapshot(**d) for d in day_dicts]
+    payload = final_state.get("exposure_payload") or {}
+    summary_data = payload.get("exposure_summary") or {}
+
+    exposure_score = summary_data.get("overall_exposure_score", 0.0)
+
+    if exposure_score >= 75:
+        overall_level = RiskLevel.CRITICAL
+    elif exposure_score >= 50:
+        overall_level = RiskLevel.HIGH
+    elif exposure_score >= 25:
+        overall_level = RiskLevel.MODERATE
+    else:
+        overall_level = RiskLevel.LOW
+
+    return ShipmentWeatherExposureResponse(
+        supplier_city=supplier_city,
+        oem_city=oem_city,
+        shipment_start_date=shipment_start_date,
+        transit_days=transit_days,
+        days=days,
+        overall_exposure_level=overall_level,
+        overall_exposure_score=exposure_score,
+        risk_analysis_payload=payload,
+        agent_summary=final_state.get("agent_summary"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat: run_weather_agent_graph (used by v1 supplier_risk_graph)
+# ---------------------------------------------------------------------------
+
+import json as _json
+
+from app.services.agent_orchestrator import _extract_json
+
+
+class _LegacyWeatherItem(TypedDict):
+    city: str
+    country: str
+    temperature: float | int | None
+    condition: str
+    description: str
+    humidity: int | None
+    windSpeed: float | int | None
+    visibility: int | None
+
+
+class _LegacyWeatherState(TypedDict, total=False):
+    scope: OemScope
+    weather_data: dict[str, list[dict]]
+    weather_items: list[_LegacyWeatherItem]
+    weather_risks: list[dict]
+    weather_opportunities: list[dict]
+
+
+def _build_legacy_weather_items(state: _LegacyWeatherState) -> _LegacyWeatherState:
+    raw = state.get("weather_data") or {}
+    items = raw.get("weather") or []
+    normalized: list[_LegacyWeatherItem] = []
+    for item in items:
+        data = item.get("data") if isinstance(item, dict) else item
+        if not isinstance(data, dict):
+            continue
+        normalized.append({
+            "city": str(data.get("city") or ""),
+            "country": str(data.get("country") or ""),
+            "temperature": data.get("temperature"),
+            "condition": str(data.get("condition") or ""),
+            "description": str(data.get("description") or ""),
+            "humidity": data.get("humidity"),
+            "windSpeed": data.get("windSpeed"),
+            "visibility": data.get("visibility"),
+        })
+    return {"weather_items": normalized}
+
+
+_legacy_prompt: ChatPromptTemplate | None = None
+
+
+def _get_legacy_chain():
+    global _legacy_prompt
+    llm = get_chat_model()
+    if llm is None:
+        return None
+    if _legacy_prompt is None:
+        _legacy_prompt = ChatPromptTemplate.from_messages([
+            (
+                "system",
+                "You are a Weather Agent for a manufacturing supply chain. "
+                "You receive normalized weather data for shipment routes and "
+                "must produce structured weather risk pointers and potential "
+                "opportunities. Return ONLY valid JSON.",
+            ),
+            (
+                "user",
+                "Analyze the following per-city weather data for supply chain "
+                "weather risks and opportunities.\n\nWeather JSON:\n"
+                "{weather_items_json}\n\nReturn JSON of shape:\n"
+                '{{"risks": [{{"title": str, "description": str, "severity": '
+                '"low"|"medium"|"high"|"critical", "affectedRegion": str|null, '
+                '"affectedSupplier": str|null, "estimatedImpact": str|null, '
+                '"estimatedCost": number|null}}], '
+                '"opportunities": [{{"title": str, "description": str, '
+                '"type": "cost_saving"|"time_saving"|"quality_improvement"|'
+                '"market_expansion"|"supplier_diversification", '
+                '"affectedRegion": str|null, "potentialBenefit": str|null, '
+                '"estimatedValue": number|null}}]}}\n'
+                "If none, use empty arrays.",
+            ),
+        ])
+    return _legacy_prompt | llm
+
+
+async def _legacy_weather_risk_llm(state: _LegacyWeatherState) -> _LegacyWeatherState:
+    items = state.get("weather_items") or []
+    if not items:
+        return {"weather_risks": [], "weather_opportunities": []}
+    chain = _get_legacy_chain()
+    if not chain:
+        return {"weather_risks": [], "weather_opportunities": []}
+    try:
+        items_json = _json.dumps(items, indent=2)
+        msg = await chain.ainvoke({"weather_items_json": items_json})
+        content = msg.content
+        if isinstance(content, str):
+            raw_text = content
+        else:
+            parts: list[str] = []
+            for block in content:
+                if isinstance(block, dict) and "text" in block:
+                    parts.append(str(block.get("text") or ""))
+                else:
+                    parts.append(str(block))
+            raw_text = "".join(parts)
+        parsed = _extract_json(raw_text) or {}
+        risks = [r for r in (parsed.get("risks") or []) if isinstance(r, dict) and r.get("title") and r.get("description")]
+        opps = [o for o in (parsed.get("opportunities") or []) if isinstance(o, dict) and o.get("title") and o.get("description")]
+        return {"weather_risks": risks, "weather_opportunities": opps}
+    except Exception as exc:
+        logger.exception("Legacy WeatherAgent LLM error: %s", exc)
+        return {"weather_risks": [], "weather_opportunities": []}
+
+
+_legacy_builder = StateGraph(_LegacyWeatherState)
+_legacy_builder.add_node("build_items", _build_legacy_weather_items)
+_legacy_builder.add_node("weather_risk_llm", _legacy_weather_risk_llm)
+_legacy_builder.set_entry_point("build_items")
+_legacy_builder.add_edge("build_items", "weather_risk_llm")
+_legacy_builder.add_edge("weather_risk_llm", END)
+_LEGACY_WEATHER_GRAPH = _legacy_builder.compile()
 
 
 async def run_weather_agent_graph(
@@ -280,14 +1102,15 @@ async def run_weather_agent_graph(
     scope: OemScope,
 ) -> dict[str, list[dict]]:
     """
-    Orchestrate the Weather Agent using LangGraph and LangChain.
+    Legacy v1 weather agent — takes pre-fetched weather data and runs
+    LLM risk extraction.  Used by ``supplier_risk_graph`` and
+    ``agent_service._run_analysis_for_oem``.
     """
-    initial_state: WeatherAgentState = {
+    initial_state: _LegacyWeatherState = {
         "scope": scope,
         "weather_data": weather_data,
     }
-
-    final_state = await WEATHER_GRAPH.ainvoke(initial_state)
+    final_state = await _LEGACY_WEATHER_GRAPH.ainvoke(initial_state)
 
     risks = final_state.get("weather_risks") or []
     opps = final_state.get("weather_opportunities") or []
@@ -296,10 +1119,10 @@ async def run_weather_agent_graph(
     opps_for_db: list[dict] = []
 
     for r in risks:
-        db_risk = {
+        risks_for_db.append({
             "title": r["title"],
             "description": r["description"],
-            "severity": r.get("severity", "medium"),
+            "severity": r.get("severity"),
             "affectedRegion": r.get("affectedRegion"),
             "affectedSupplier": r.get("affectedSupplier"),
             "estimatedImpact": r.get("estimatedImpact"),
@@ -312,20 +1135,18 @@ async def run_weather_agent_graph(
                     "temperature_extreme_days": r.get("temperature_extreme_days"),
                 }
             },
-        }
-        risks_for_db.append(db_risk)
+        })
 
     for o in opps:
-        db_opp = {
+        opps_for_db.append({
             "title": o["title"],
             "description": o["description"],
-            "type": o.get("type", "time_saving"),
+            "type": o.get("type"),
             "affectedRegion": o.get("affectedRegion"),
             "potentialBenefit": o.get("potentialBenefit"),
             "estimatedValue": o.get("estimatedValue"),
             "sourceType": "weather",
             "sourceData": None,
-        }
-        opps_for_db.append(db_opp)
+        })
 
     return {"risks": risks_for_db, "opportunities": opps_for_db}
