@@ -227,11 +227,21 @@ function DayRiskModal({
 
           {/* Weather stats grid */}
           <section>
-            <h4 className="text-[11px] font-semibold uppercase tracking-wide text-medium-gray dark:text-gray-400 mb-2">
-              Weather Conditions
-            </h4>
+            <div className="flex items-center gap-2 mb-2">
+              <h4 className="text-[11px] font-semibold uppercase tracking-wide text-medium-gray dark:text-gray-400">
+                Weather Conditions
+              </h4>
+              {day.weather.is_estimated && (
+                <span className="text-[9px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                  Projected
+                </span>
+              )}
+            </div>
             <div className="grid grid-cols-3 gap-2">
               <StatTile label="Temp" value={`${day.weather.temp_c.toFixed(1)}°C`} />
+              {day.weather.feelslike_c != null && day.weather.feelslike_c !== day.weather.temp_c && (
+                <StatTile label="Feels Like" value={`${day.weather.feelslike_c.toFixed(1)}°C`} />
+              )}
               {day.weather.min_temp_c != null && (
                 <StatTile label="Min Temp" value={`${day.weather.min_temp_c.toFixed(1)}°C`} />
               )}
@@ -239,7 +249,13 @@ function DayRiskModal({
                 <StatTile label="Max Temp" value={`${day.weather.max_temp_c.toFixed(1)}°C`} />
               )}
               <StatTile label="Wind" value={`${day.weather.wind_kph.toFixed(0)} km/h`} />
+              {day.weather.gust_kph != null && day.weather.gust_kph > day.weather.wind_kph && (
+                <StatTile label="Gusts" value={`${day.weather.gust_kph.toFixed(0)} km/h`} />
+              )}
               <StatTile label="Rainfall" value={`${day.weather.precip_mm.toFixed(1)} mm`} />
+              {(day.weather.snow_cm ?? 0) > 0 && (
+                <StatTile label="Snow" value={`${day.weather.snow_cm!.toFixed(1)} cm`} />
+              )}
               <StatTile label="Visibility" value={`${day.weather.vis_km.toFixed(1)} km`} />
               <StatTile label="Humidity" value={`${day.weather.humidity}%`} />
             </div>

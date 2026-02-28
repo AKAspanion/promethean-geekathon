@@ -1,7 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import type { WeatherGraphResponse, WeatherRisk, WeatherOpportunity } from "@/lib/types";
+import type {
+  WeatherGraphResponse,
+  WeatherRisk,
+  WeatherOpportunity,
+} from "@/lib/types";
 import { RISK_LEVEL_COLORS, RISK_LEVEL_BAR_COLORS } from "@/lib/constants";
 import { ShipmentTimeline } from "@/components/ShipmentTimeline";
 
@@ -47,8 +51,14 @@ function MetricTile({
       <div className="text-[11px] font-medium uppercase tracking-wide text-medium-gray dark:text-gray-400">
         {label}
       </div>
-      <div className="text-[18px] font-bold text-dark-gray dark:text-gray-100">{value}</div>
-      {sub && <div className="text-[11px] text-medium-gray dark:text-gray-400">{sub}</div>}
+      <div className="text-[18px] font-bold text-dark-gray dark:text-gray-100">
+        {value}
+      </div>
+      {sub && (
+        <div className="text-[11px] text-medium-gray dark:text-gray-400">
+          {sub}
+        </div>
+      )}
     </div>
   );
 }
@@ -116,7 +126,9 @@ function ExposureOverview({ risk }: { risk: WeatherRisk }) {
               {origin}
             </span>
           )}
-          <span className="text-medium-gray dark:text-gray-400 text-[18px]">→</span>
+          <span className="text-medium-gray dark:text-gray-400 text-[18px]">
+            →
+          </span>
           {dest && (
             <span className="rounded-full border border-purple-200 dark:border-purple-800 bg-purple-50 dark:bg-purple-900/30 px-3 py-1 text-[13px] text-purple-700 dark:text-purple-300">
               {dest}
@@ -184,7 +196,9 @@ function ExposureOverview({ risk }: { risk: WeatherRisk }) {
 
       {risk.affectedSupplier && (
         <p className="text-[12px] text-medium-gray dark:text-gray-400">
-          <span className="font-semibold text-dark-gray dark:text-gray-300">Affected Supplier: </span>
+          <span className="font-semibold text-dark-gray dark:text-gray-300">
+            Affected Supplier:{" "}
+          </span>
           {risk.affectedSupplier}
         </p>
       )}
@@ -213,7 +227,8 @@ function RiskFactorsMax({ factors }: { factors: Record<string, number> }) {
         {entries.map(([key, score]) => {
           const level = scoreToLevel(score);
           const colors = RISK_LEVEL_COLORS[level] ?? RISK_LEVEL_COLORS.low;
-          const barColor = RISK_LEVEL_BAR_COLORS[level] ?? RISK_LEVEL_BAR_COLORS.low;
+          const barColor =
+            RISK_LEVEL_BAR_COLORS[level] ?? RISK_LEVEL_BAR_COLORS.low;
           return (
             <div
               key={key}
@@ -266,11 +281,17 @@ function DayRiskTimeline({ dayRisks }: { dayRisks: WeatherRisk[] }) {
       <div className="flex gap-1">
         {dayRisks
           .slice()
-          .sort((a, b) => (a.sourceData?.weatherExposure?.day_number ?? 0) - (b.sourceData?.weatherExposure?.day_number ?? 0))
+          .sort(
+            (a, b) =>
+              (a.sourceData?.weatherExposure?.day_number ?? 0) -
+              (b.sourceData?.weatherExposure?.day_number ?? 0),
+          )
           .map((r, i) => {
-            const score = r.sourceData?.weatherExposure?.weather_exposure_score ?? 0;
+            const score =
+              r.sourceData?.weatherExposure?.weather_exposure_score ?? 0;
             const level = scoreToLevel(score);
-            const barColor = RISK_LEVEL_BAR_COLORS[level] ?? RISK_LEVEL_BAR_COLORS.low;
+            const barColor =
+              RISK_LEVEL_BAR_COLORS[level] ?? RISK_LEVEL_BAR_COLORS.low;
             const dayNum = r.sourceData?.weatherExposure?.day_number ?? i + 1;
             return (
               <div
@@ -286,13 +307,18 @@ function DayRiskTimeline({ dayRisks }: { dayRisks: WeatherRisk[] }) {
       <div className="flex gap-3 overflow-x-auto pb-1">
         {dayRisks
           .slice()
-          .sort((a, b) => (a.sourceData?.weatherExposure?.day_number ?? 0) - (b.sourceData?.weatherExposure?.day_number ?? 0))
+          .sort(
+            (a, b) =>
+              (a.sourceData?.weatherExposure?.day_number ?? 0) -
+              (b.sourceData?.weatherExposure?.day_number ?? 0),
+          )
           .map((r, i) => {
             const exp = r.sourceData?.weatherExposure ?? {};
             const score = exp.weather_exposure_score ?? 0;
             const level = scoreToLevel(score);
             const colors = RISK_LEVEL_COLORS[level] ?? RISK_LEVEL_COLORS.low;
-            const barColor = RISK_LEVEL_BAR_COLORS[level] ?? RISK_LEVEL_BAR_COLORS.low;
+            const barColor =
+              RISK_LEVEL_BAR_COLORS[level] ?? RISK_LEVEL_BAR_COLORS.low;
 
             return (
               <div
@@ -319,7 +345,9 @@ function DayRiskTimeline({ dayRisks }: { dayRisks: WeatherRisk[] }) {
 
                 <div className="space-y-1">
                   <div className="flex justify-between text-[11px]">
-                    <span className="text-medium-gray dark:text-gray-400">Risk score</span>
+                    <span className="text-medium-gray dark:text-gray-400">
+                      Risk score
+                    </span>
                     <span className="font-bold text-dark-gray dark:text-gray-200">
                       {score.toFixed(0)}/100
                     </span>
@@ -361,7 +389,9 @@ function RiskItem({ risk }: { risk: WeatherRisk }) {
   const colors = RISK_LEVEL_COLORS[level] ?? RISK_LEVEL_COLORS.low;
 
   return (
-    <div className={`rounded-xl border ${colors.border} bg-white dark:bg-gray-800 shadow-sm overflow-hidden`}>
+    <div
+      className={`rounded-xl border ${colors.border} bg-white dark:bg-gray-800 shadow-sm overflow-hidden`}
+    >
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -403,25 +433,41 @@ function RiskItem({ risk }: { risk: WeatherRisk }) {
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 text-[12px]">
             {risk.estimatedImpact && (
               <div className="rounded-lg border border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-700/40 px-3 py-2">
-                <div className="font-semibold text-dark-gray dark:text-gray-300 mb-0.5">Estimated Impact</div>
-                <div className="text-medium-gray dark:text-gray-400">{risk.estimatedImpact}</div>
+                <div className="font-semibold text-dark-gray dark:text-gray-300 mb-0.5">
+                  Estimated Impact
+                </div>
+                <div className="text-medium-gray dark:text-gray-400">
+                  {risk.estimatedImpact}
+                </div>
               </div>
             )}
             {risk.affectedSupplier && (
               <div className="rounded-lg border border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-700/40 px-3 py-2">
-                <div className="font-semibold text-dark-gray dark:text-gray-300 mb-0.5">Affected Supplier</div>
-                <div className="text-medium-gray dark:text-gray-400">{risk.affectedSupplier}</div>
+                <div className="font-semibold text-dark-gray dark:text-gray-300 mb-0.5">
+                  Affected Supplier
+                </div>
+                <div className="text-medium-gray dark:text-gray-400">
+                  {risk.affectedSupplier}
+                </div>
               </div>
             )}
             {risk.affectedRegion && (
               <div className="rounded-lg border border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-700/40 px-3 py-2">
-                <div className="font-semibold text-dark-gray dark:text-gray-300 mb-0.5">Affected Region</div>
-                <div className="text-medium-gray dark:text-gray-400">{risk.affectedRegion}</div>
+                <div className="font-semibold text-dark-gray dark:text-gray-300 mb-0.5">
+                  Affected Region
+                </div>
+                <div className="text-medium-gray dark:text-gray-400">
+                  {risk.affectedRegion}
+                </div>
               </div>
             )}
             <div className="rounded-lg border border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-700/40 px-3 py-2">
-              <div className="font-semibold text-dark-gray dark:text-gray-300 mb-0.5">Source Type</div>
-              <div className="text-medium-gray dark:text-gray-400">{risk.sourceType}</div>
+              <div className="font-semibold text-dark-gray dark:text-gray-300 mb-0.5">
+                Source Type
+              </div>
+              <div className="text-medium-gray dark:text-gray-400">
+                {risk.sourceType}
+              </div>
             </div>
           </div>
 
@@ -434,9 +480,15 @@ function RiskItem({ risk }: { risk: WeatherRisk }) {
               <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[12px]">
                 {Object.entries(exp).map(([k, v]) => (
                   <div key={k} className="flex justify-between gap-2">
-                    <span className="text-medium-gray dark:text-gray-500">{k.replace(/_/g, " ")}</span>
+                    <span className="text-medium-gray dark:text-gray-500">
+                      {k.replace(/_/g, " ")}
+                    </span>
                     <span className="font-semibold text-dark-gray dark:text-gray-300 text-right">
-                      {v == null ? "—" : typeof v === "number" ? v.toFixed(1) : String(v)}
+                      {v == null
+                        ? "—"
+                        : typeof v === "number"
+                          ? v.toFixed(1)
+                          : String(v)}
                     </span>
                   </div>
                 ))}
@@ -470,14 +522,22 @@ function OpportunityItem({ opp }: { opp: WeatherOpportunity }) {
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 text-[12px]">
         {opp.potentialBenefit && (
           <div className="rounded-lg border border-green-200 dark:border-green-800/40 bg-green-50/50 dark:bg-green-900/10 px-3 py-2">
-            <div className="font-semibold text-dark-gray dark:text-gray-300 mb-0.5">Potential Benefit</div>
-            <div className="text-medium-gray dark:text-gray-400">{opp.potentialBenefit}</div>
+            <div className="font-semibold text-dark-gray dark:text-gray-300 mb-0.5">
+              Potential Benefit
+            </div>
+            <div className="text-medium-gray dark:text-gray-400">
+              {opp.potentialBenefit}
+            </div>
           </div>
         )}
         {opp.affectedRegion && (
           <div className="rounded-lg border border-green-200 dark:border-green-800/40 bg-green-50/50 dark:bg-green-900/10 px-3 py-2">
-            <div className="font-semibold text-dark-gray dark:text-gray-300 mb-0.5">Affected Region</div>
-            <div className="text-medium-gray dark:text-gray-400">{opp.affectedRegion}</div>
+            <div className="font-semibold text-dark-gray dark:text-gray-300 mb-0.5">
+              Affected Region
+            </div>
+            <div className="text-medium-gray dark:text-gray-400">
+              {opp.affectedRegion}
+            </div>
           </div>
         )}
       </div>
@@ -532,7 +592,9 @@ function RawJsonPanel({ data }: { data: WeatherGraphResponse }) {
           >
             {copied ? "✓ Copied" : "Copy JSON"}
           </button>
-          <span className="text-[18px] text-medium-gray dark:text-gray-400">{open ? "−" : "+"}</span>
+          <span className="text-[18px] text-medium-gray dark:text-gray-400">
+            {open ? "−" : "+"}
+          </span>
         </div>
       </div>
       {open && (
@@ -552,17 +614,20 @@ interface ShipmentExposureSummaryProps {
   data: WeatherGraphResponse;
 }
 
-export function ShipmentExposureSummary({ data }: ShipmentExposureSummaryProps) {
+export function ShipmentExposureSummary({
+  data,
+}: ShipmentExposureSummaryProps) {
   const { risks, opportunities, daily_timeline } = data;
 
   // Separate route-level risk (has "route" key) from per-day risks (have "day_number")
   const routeRisk = risks.find(
-    (r) => r.sourceData?.weatherExposure?.route != null
+    (r) => r.sourceData?.weatherExposure?.route != null,
   );
   const dayRisks = risks.filter(
-    (r) => r.sourceData?.weatherExposure?.day_number != null
+    (r) => r.sourceData?.weatherExposure?.day_number != null,
   );
-  const factorScores = (routeRisk?.sourceData?.risk_factors_max ?? {}) as Record<string, number>;
+  const factorScores = (routeRisk?.sourceData?.risk_factors_max ??
+    {}) as Record<string, number>;
 
   return (
     <div className="space-y-5">

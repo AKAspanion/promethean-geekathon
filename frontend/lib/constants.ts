@@ -2,7 +2,7 @@
 export const API_BASE =
   typeof window !== "undefined"
     ? (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000")
-    : process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    : (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000");
 
 export const RISK_LEVEL_COLORS: Record<
   string,
@@ -30,16 +30,16 @@ export const RISK_LEVEL_COLORS: Record<
     border: "border-primary-dark/50",
   },
   critical: {
-    bg: "bg-primary-dark",
-    text: "text-white",
-    border: "border-primary-dark",
+    bg: "bg-red-100 dark:bg-red-900/50",
+    text: "text-red-800 dark:text-red-100",
+    border: "border-red-300 dark:border-red-700",
   },
 };
 
 export const RISK_LEVEL_BAR_COLORS: Record<string, string> = {
   low: "bg-cyan-blue",
   moderate: "bg-primary-light",
-  medium: "bg-primary-light",  // alias for moderate
+  medium: "bg-primary-light", // alias for moderate
   high: "bg-primary-dark",
-  critical: "bg-primary-dark",
+  critical: "bg-red-500",
 };

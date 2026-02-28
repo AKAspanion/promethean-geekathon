@@ -97,14 +97,21 @@ class DayWeatherSnapshot(BaseModel):
     location_name: str
     estimated_location: str
     condition: str
+    condition_code: int = 1000
     temp_c: float
+    feelslike_c: float | None = None
     min_temp_c: float | None = None
     max_temp_c: float | None = None
     wind_kph: float
+    gust_kph: float | None = None
     precip_mm: float
+    snow_cm: float = 0.0
     vis_km: float
     humidity: int
+    pressure_mb: float | None = None
+    uv: float | None = None
     is_historical: bool
+    is_estimated: bool = False
 
 
 class DayRiskSnapshot(BaseModel):

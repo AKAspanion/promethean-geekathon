@@ -25,14 +25,21 @@ export interface DayWeatherSnapshot {
   location_name: string;
   estimated_location: string;
   condition: string;
+  condition_code?: number;
   temp_c: number;
+  feelslike_c?: number | null;
   min_temp_c?: number | null;
   max_temp_c?: number | null;
   wind_kph: number;
+  gust_kph?: number | null;
   precip_mm: number;
+  snow_cm?: number;
   vis_km: number;
   humidity: number;
+  pressure_mb?: number | null;
+  uv?: number | null;
   is_historical: boolean;
+  is_estimated?: boolean;
 }
 
 export interface DayRiskSnapshot {
@@ -62,10 +69,15 @@ export interface WeatherRisk {
       peak_risk_day?: number | null;
       peak_risk_date?: string | null;
       high_risk_day_count?: number;
+      estimated_day_count?: number;
+      dominant_risk_factor?: string;
+      dominant_risk_factor_score?: number;
       route?: string;
       day_number?: number;
       date?: string;
       location?: string;
+      is_estimated?: boolean;
+      weather_snapshot?: Record<string, unknown>;
     };
     risk_factors_max?: Record<string, number>;
   };

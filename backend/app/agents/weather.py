@@ -258,6 +258,15 @@ def _interpolate_waypoints(supplier: str, oem: str, transit_days: int) -> list[s
 # Weather snapshot helpers
 # ---------------------------------------------------------------------------
 
+def _extract_peak_hourly_gust(fd: dict) -> float | None:
+    """Extract peak gust_kph from hourly data for a forecast day."""
+    hours = fd.get("hour") or []
+    if not hours:
+        return None
+    gusts = [float(h.get("gust_kph", 0)) for h in hours if h.get("gust_kph")]
+    return max(gusts) if gusts else None
+
+
 def _extract_day_weather_from_forecast(
     forecast_data: dict, target_date: str, day_number: int,
     location_label: str, city_used: str,
@@ -268,17 +277,22 @@ def _extract_day_weather_from_forecast(
             if fd.get("date") == target_date:
                 day = fd.get("day", {})
                 cond = day.get("condition", {})
+                peak_gust = _extract_peak_hourly_gust(fd)
                 return DayWeatherSnapshot(
                     date=target_date, day_number=day_number,
                     location_name=location_label, estimated_location=city_used,
                     condition=cond.get("text", "Unknown"),
+                    condition_code=int(cond.get("code", 1000)),
                     temp_c=float(day.get("avgtemp_c", 0)),
                     min_temp_c=float(day.get("mintemp_c", 0)),
                     max_temp_c=float(day.get("maxtemp_c", 0)),
                     wind_kph=float(day.get("maxwind_kph", 0)),
+                    gust_kph=peak_gust,
                     precip_mm=float(day.get("totalprecip_mm", 0)),
+                    snow_cm=float(day.get("totalsnow_cm", 0)),
                     vis_km=float(day.get("avgvis_km", 10)),
                     humidity=int(day.get("avghumidity", 50)),
+                    uv=float(day.get("uv", 0)) if day.get("uv") is not None else None,
                     is_historical=False,
                 )
     except Exception as e:
@@ -296,17 +310,22 @@ def _extract_day_weather_from_history(
             if fd.get("date") == target_date:
                 day = fd.get("day", {})
                 cond = day.get("condition", {})
+                peak_gust = _extract_peak_hourly_gust(fd)
                 return DayWeatherSnapshot(
                     date=target_date, day_number=day_number,
                     location_name=location_label, estimated_location=city_used,
                     condition=cond.get("text", "Unknown"),
+                    condition_code=int(cond.get("code", 1000)),
                     temp_c=float(day.get("avgtemp_c", 0)),
                     min_temp_c=float(day.get("mintemp_c", 0)),
                     max_temp_c=float(day.get("maxtemp_c", 0)),
                     wind_kph=float(day.get("maxwind_kph", 0)),
+                    gust_kph=peak_gust,
                     precip_mm=float(day.get("totalprecip_mm", 0)),
+                    snow_cm=float(day.get("totalsnow_cm", 0)),
                     vis_km=float(day.get("avgvis_km", 10)),
                     humidity=int(day.get("avghumidity", 50)),
+                    uv=float(day.get("uv", 0)) if day.get("uv") is not None else None,
                     is_historical=True,
                 )
     except Exception as e:
@@ -322,7 +341,7 @@ def _get_last_forecast_day(
     When *target_date* is beyond the forecast window (WeatherAPI cap: 14 days),
     return the *last* available forecast day's data as a best-effort estimate.
     The ``date`` field is set to the actual target date so the timeline stays
-    continuous; ``is_historical`` is left False (it is a future estimate).
+    continuous.  ``is_estimated`` is set True to flag data quality downstream.
     """
     try:
         forecast_days = forecast_data.get("forecast", {}).get("forecastday", [])
@@ -331,18 +350,24 @@ def _get_last_forecast_day(
         last = forecast_days[-1]
         day = last.get("day", {})
         cond = day.get("condition", {})
+        peak_gust = _extract_peak_hourly_gust(last)
         return DayWeatherSnapshot(
             date=target_date_str, day_number=day_number,
             location_name=location_label, estimated_location=city_used,
             condition=cond.get("text", "Unknown"),
+            condition_code=int(cond.get("code", 1000)),
             temp_c=float(day.get("avgtemp_c", 0)),
             min_temp_c=float(day.get("mintemp_c", 0)),
             max_temp_c=float(day.get("maxtemp_c", 0)),
             wind_kph=float(day.get("maxwind_kph", 0)),
+            gust_kph=peak_gust,
             precip_mm=float(day.get("totalprecip_mm", 0)),
+            snow_cm=float(day.get("totalsnow_cm", 0)),
             vis_km=float(day.get("avgvis_km", 10)),
             humidity=int(day.get("avghumidity", 50)),
+            uv=float(day.get("uv", 0)) if day.get("uv") is not None else None,
             is_historical=False,
+            is_estimated=True,
         )
     except Exception as e:
         logger.warning("Failed to get last forecast day for %s: %s", target_date_str, e)
@@ -350,15 +375,22 @@ def _get_last_forecast_day(
 
 
 def _weather_snapshot_to_current_dict(snap: DayWeatherSnapshot) -> dict:
+    """Convert a DayWeatherSnapshot into the dict format expected by compute_risk().
+
+    Uses actual condition codes, gust data, and feels-like temperature when
+    available — previously these were hardcoded, causing the risk engine to
+    miss snow/ice, storms, and extreme wind conditions entirely.
+    """
     return {
         "temp_c": snap.temp_c,
-        "feelslike_c": snap.temp_c,
+        "feelslike_c": snap.feelslike_c if snap.feelslike_c is not None else snap.temp_c,
         "wind_kph": snap.wind_kph,
-        "gust_kph": snap.wind_kph * 1.3,
+        "gust_kph": snap.gust_kph if snap.gust_kph is not None else snap.wind_kph * 1.3,
         "precip_mm": snap.precip_mm,
         "vis_km": snap.vis_km,
         "humidity": snap.humidity,
-        "condition": {"code": 1000, "text": snap.condition},
+        "uv": snap.uv,
+        "condition": {"code": snap.condition_code, "text": snap.condition},
     }
 
 
@@ -688,12 +720,17 @@ async def _build_daily_timeline_node(state: WeatherState) -> WeatherState:
                     date=target_date_str, day_number=day_number,
                     location_name=location_label, estimated_location=city_used,
                     condition=cond.get("text", "Unknown"),
+                    condition_code=int(cond.get("code", 1000)),
                     temp_c=float(current.get("temp_c", 0)),
+                    feelslike_c=float(current.get("feelslike_c", current.get("temp_c", 0))),
                     min_temp_c=None, max_temp_c=None,
                     wind_kph=float(current.get("wind_kph", 0)),
+                    gust_kph=float(current.get("gust_kph", 0)) if current.get("gust_kph") else None,
                     precip_mm=float(current.get("precip_mm", 0)),
                     vis_km=float(current.get("vis_km", 10)),
                     humidity=int(current.get("humidity", 50)),
+                    pressure_mb=float(current.get("pressure_mb", 0)) if current.get("pressure_mb") else None,
+                    uv=float(current.get("uv", 0)) if current.get("uv") is not None else None,
                     is_historical=False,
                 )
         elif is_past:
@@ -823,11 +860,16 @@ async def _build_daily_timeline_node(state: WeatherState) -> WeatherState:
                 "day": d.day_number, "date": d.date,
                 "location": d.location_name,
                 "is_historical": d.weather.is_historical,
+                "is_estimated": d.weather.is_estimated,
                 "weather": {
                     "condition": d.weather.condition,
+                    "condition_code": d.weather.condition_code,
                     "temp_c": d.weather.temp_c,
+                    "feelslike_c": d.weather.feelslike_c,
                     "wind_kph": d.weather.wind_kph,
+                    "gust_kph": d.weather.gust_kph,
                     "precip_mm": d.weather.precip_mm,
+                    "snow_cm": d.weather.snow_cm,
                     "vis_km": d.weather.vis_km,
                     "humidity": d.weather.humidity,
                 },
@@ -905,19 +947,45 @@ async def _build_exposure_risks_node(state: WeatherState) -> WeatherState:
     else:
         severity = "low"
 
+    # Identify the dominant risk factor for precise descriptions
+    factor_max = payload.get("risk_factors_max") or {}
+    top_factor = max(factor_max, key=factor_max.get, default="transportation") if factor_max else "transportation"
+    top_factor_score = factor_max.get(top_factor, 0)
+
+    # Count estimated days for data quality context
+    estimated_day_count = sum(
+        1 for d in (payload.get("daily_timeline") or []) if d.get("is_estimated")
+    )
+
     if exposure_score > 10:
         concern_text = "; ".join(concerns[:3]) if concerns else "Weather exposure along transit route"
         action_text = "; ".join(actions[:3]) if actions else "Monitor weather conditions"
 
+        # Build precise description with dominant factor context
+        desc_parts = [
+            f"Shipment route {supplier_city} → {oem_city}: overall weather exposure "
+            f"score {exposure_score:.0f}/100 ({severity}).",
+        ]
+        if peak_day and peak_date:
+            desc_parts.append(
+                f"Peak risk {peak_score:.0f}/100 on Day {peak_day} ({peak_date})."
+            )
+        if high_risk_count:
+            desc_parts.append(f"{high_risk_count} high/critical risk day(s).")
+        if top_factor_score >= 25:
+            factor_label = top_factor.replace("_", " ").title()
+            desc_parts.append(
+                f"Dominant factor: {factor_label} (peak score {top_factor_score:.0f})."
+            )
+        desc_parts.append(f"Key concerns: {concern_text}.")
+        if estimated_day_count:
+            desc_parts.append(
+                f"Note: {estimated_day_count} day(s) use projected data beyond forecast window."
+            )
+
         risks.append({
-            "title": f"Weather exposure on {supplier_city} to {oem_city} route",
-            "description": (
-                f"Shipment route from {supplier_city} to {oem_city} has "
-                f"an overall weather exposure score of {exposure_score:.0f}/100. "
-                f"Peak risk of {peak_score:.0f}/100 on Day {peak_day} ({peak_date}). "
-                f"{high_risk_count} high/critical risk day(s) identified. "
-                f"Key concerns: {concern_text}."
-            ),
+            "title": f"Weather exposure: {supplier_city} → {oem_city} route ({severity})",
+            "description": " ".join(desc_parts),
             "severity": severity,
             "affectedRegion": f"{supplier_city} - {oem_city}",
             "affectedSupplier": supplier_name,
@@ -931,30 +999,57 @@ async def _build_exposure_risks_node(state: WeatherState) -> WeatherState:
                     "peak_risk_day": peak_day,
                     "peak_risk_date": peak_date,
                     "high_risk_day_count": high_risk_count,
+                    "estimated_day_count": estimated_day_count,
+                    "dominant_risk_factor": top_factor,
+                    "dominant_risk_factor_score": top_factor_score,
                     "route": f"{supplier_city} -> {oem_city}",
                 },
-                "risk_factors_max": payload.get("risk_factors_max", {}),
+                "risk_factors_max": factor_max,
             },
         })
 
-        # Add per-day risks for high/critical days
+        # Add per-day risks for high/critical days with precise weather data
         for day_entry in (payload.get("daily_timeline") or []):
             day_score = day_entry.get("risk_score", 0)
             day_level = day_entry.get("risk_level", "low")
             if isinstance(day_level, RiskLevel):
                 day_level = day_level.value
             if day_level in ("high", "critical"):
+                w = day_entry.get("weather", {})
+                day_sev = "critical" if day_score >= 75 else "high"
+
+                # Build detailed weather description
+                weather_details = [f"{w.get('condition', 'Unknown')}"]
+                weather_details.append(f"temp {w.get('temp_c', 0):.1f}°C")
+                wind = w.get("wind_kph", 0)
+                gust = w.get("gust_kph")
+                if gust and gust > wind:
+                    weather_details.append(f"wind {wind:.0f} km/h (gusts {gust:.0f})")
+                else:
+                    weather_details.append(f"wind {wind:.0f} km/h")
+                if w.get("precip_mm", 0) > 0:
+                    weather_details.append(f"precip {w['precip_mm']:.1f} mm")
+                if w.get("snow_cm", 0) > 0:
+                    weather_details.append(f"snow {w['snow_cm']:.1f} cm")
+                if w.get("vis_km", 10) < 5:
+                    weather_details.append(f"visibility {w['vis_km']:.1f} km")
+
+                estimated_tag = " [PROJECTED]" if day_entry.get("is_estimated") else ""
+
                 risks.append({
-                    "title": f"High weather risk on Day {day_entry['day']} ({day_entry['date']})",
+                    "title": f"Day {day_entry['day']} ({day_entry['date']}): {day_sev} weather risk at {day_entry['location']}",
                     "description": (
-                        f"Weather at {day_entry['location']}: {day_entry['weather']['condition']}, "
-                        f"{day_entry['weather']['temp_c']}C, wind {day_entry['weather']['wind_kph']} km/h. "
-                        f"Risk score: {day_score:.0f}/100. {day_entry.get('key_concern', '')}"
+                        f"Weather at {day_entry['location']}: {', '.join(weather_details)}. "
+                        f"Risk score: {day_score:.0f}/100. "
+                        f"{day_entry.get('key_concern', '')}{estimated_tag}"
                     ),
-                    "severity": "critical" if day_score >= 75 else "high",
+                    "severity": day_sev,
                     "affectedRegion": day_entry["location"],
                     "affectedSupplier": supplier_name,
-                    "estimatedImpact": f"Potential delay on transit day {day_entry['day']}",
+                    "estimatedImpact": (
+                        f"Transit disruption likely on Day {day_entry['day']} — "
+                        f"{day_entry.get('key_concern', 'adverse weather conditions')}"
+                    ),
                     "estimatedCost": None,
                     "sourceType": "weather",
                     "sourceData": {
@@ -963,25 +1058,39 @@ async def _build_exposure_risks_node(state: WeatherState) -> WeatherState:
                             "day_number": day_entry["day"],
                             "date": day_entry["date"],
                             "location": day_entry["location"],
+                            "is_estimated": day_entry.get("is_estimated", False),
+                            "weather_snapshot": w,
                         },
                     },
                 })
     else:
+        # Favorable conditions — provide actionable opportunity
+        timeline = payload.get("daily_timeline") or []
+        avg_temp = sum(d["weather"]["temp_c"] for d in timeline) / len(timeline) if timeline else 0
+        max_wind = max((d["weather"]["wind_kph"] for d in timeline), default=0) if timeline else 0
+
         opportunities.append({
-            "title": f"Favorable weather window for {supplier_city} to {oem_city} route",
+            "title": f"Favorable weather: {supplier_city} → {oem_city} route clear",
             "description": (
-                f"Weather conditions along the {supplier_city} to {oem_city} "
-                f"transit route appear stable with low exposure score of {exposure_score:.0f}/100."
+                f"Weather conditions along the {supplier_city} → {oem_city} "
+                f"transit route are stable with exposure score {exposure_score:.0f}/100. "
+                f"Average temperature {avg_temp:.1f}°C, max wind {max_wind:.0f} km/h. "
+                f"No high-risk days identified across the {state.get('transit_days', 0)}-day transit window."
             ),
             "type": "time_saving",
             "affectedRegion": f"{supplier_city} - {oem_city}",
-            "potentialBenefit": "Opportunity to prioritize shipments while conditions are favorable.",
+            "potentialBenefit": (
+                "Conditions favor on-time or expedited delivery. "
+                "Consider prioritizing high-value or time-sensitive shipments on this route."
+            ),
             "estimatedValue": None,
             "sourceType": "weather",
             "sourceData": {
                 "weatherExposure": {
                     "weather_exposure_score": exposure_score,
                     "route": f"{supplier_city} -> {oem_city}",
+                    "avg_temp_c": round(avg_temp, 1),
+                    "max_wind_kph": round(max_wind, 1),
                 },
             },
         })
@@ -1010,17 +1119,57 @@ async def _build_exposure_risks_node(state: WeatherState) -> WeatherState:
 _SUMMARY_PROMPT = ChatPromptTemplate.from_messages([
     (
         "system",
-        "You are a supply chain risk analyst specializing in weather-related transit risks.",
+        (
+            "You are a senior supply chain weather risk analyst writing production-grade "
+            "executive briefings for logistics operations teams. Your job is to TRANSLATE "
+            "pre-computed risk data into clear, precise, actionable prose. You NEVER "
+            "re-score, invent, exaggerate, or downplay risks.\n\n"
+            "STRICT ACCURACY RULES (violation = operational harm):\n"
+            "1. Every claim MUST cite exact numbers from the data: day numbers, dates, "
+            "scores, city names, weather values (temp, wind, precip). No rounding unless "
+            "the data is already rounded.\n"
+            "2. Do NOT speculate, hypothesize, or add information not present in the data. "
+            "No generic supply chain advice. No 'could potentially' language.\n"
+            "3. If overall_exposure_score < 25 AND high_risk_day_count is 0, state that "
+            "conditions are favorable for transit — do NOT manufacture or imply risks.\n"
+            "4. Mitigations MUST map to the specific risk factors that scored highest in "
+            "risk_factors_max (transportation, port_and_route, power_outage, production, "
+            "raw_material_delay). Never suggest mitigations for factors scoring below 25.\n"
+            "5. Never fabricate weather events, cost figures, delay estimates, or disruption "
+            "timelines that are not directly stated in the data.\n"
+            "6. If any day has is_estimated=true, explicitly note that those days use "
+            "projected data beyond the 14-day forecast window and carry lower confidence.\n"
+            "7. Severity language must match scores exactly:\n"
+            "   - Score <25: 'low risk' or 'favorable'\n"
+            "   - Score 25-49: 'moderate risk'\n"
+            "   - Score 50-74: 'high risk' — use urgent but measured language\n"
+            "   - Score >=75: 'critical risk' — flag for immediate operational attention\n"
+            "8. When transport_mode is available (sea, air, road, rail), tailor risk "
+            "interpretation: sea freight is sensitive to wind/waves, air to visibility/storms, "
+            "road to precipitation/ice, rail to extreme temperature.\n"
+            "9. Do NOT use phrases like 'I recommend' or 'In my assessment'. Write as an "
+            "objective risk report."
+        ),
     ),
     (
         "user",
         (
-            "A shipment is travelling from {supplier_city} to {oem_city} "
-            "over {transit_days} days starting {start_date}.\n\n"
-            "Exposure summary:\n{exposure_json}\n\n"
-            "Write a concise executive summary (3-5 sentences) for an OEM operations manager: "
-            "highlight the worst weather windows, which days/legs are most exposed, "
-            "and top 2-3 mitigation actions. Keep it under 400 characters."
+            "SHIPMENT ROUTE: {supplier_city} → {oem_city}\n"
+            "TRANSIT: {transit_days} days starting {start_date}\n\n"
+            "PRE-COMPUTED RISK DATA (narrate these numbers verbatim — do not re-derive or reinterpret):\n"
+            "{exposure_json}\n\n"
+            "Write a 3–5 sentence executive briefing following this exact structure:\n"
+            "1. OPEN: State the overall_exposure_score, its severity band, and the route.\n"
+            "2. PEAK: Name the peak-risk day number, its exact date, location, weather "
+            "condition, and score. If high_risk_day_count > 1, state the total count.\n"
+            "3. DRIVERS: Name the top 1-2 risk factors from risk_factors_max with their "
+            "peak scores and the specific weather conditions driving them (wind speed, "
+            "precip amount, visibility, condition name).\n"
+            "4. ACTION: 2-3 specific mitigations that directly address the identified "
+            "drivers. If score <25, state that no mitigations are needed and conditions "
+            "favor expedited shipping.\n\n"
+            "Format: Plain professional prose. Exact numbers from the data. No bullet points. "
+            "No markdown. Under 600 characters."
         ),
     ),
 ])
@@ -1037,7 +1186,31 @@ async def _llm_summary_node(state: WeatherState) -> WeatherState:
     supplier_name = state.get("supplier_name")
 
     import json
-    exposure_json = json.dumps(payload.get("exposure_summary", {}), indent=2)
+    # Include daily timeline + risk factors so LLM can reference specific days accurately
+    timeline_brief = [
+        {
+            "day": d["day"], "date": d["date"], "location": d["location"],
+            "condition": d["weather"]["condition"],
+            "temp_c": d["weather"]["temp_c"], "wind_kph": d["weather"]["wind_kph"],
+            "precip_mm": d["weather"]["precip_mm"],
+            "snow_cm": d["weather"].get("snow_cm", 0),
+            "vis_km": d["weather"].get("vis_km", 10),
+            "humidity": d["weather"].get("humidity", 50),
+            "risk_score": d["risk_score"], "risk_level": d["risk_level"],
+            "key_concern": d.get("key_concern", ""),
+            "is_estimated": d.get("is_estimated", False),
+            "is_historical": d.get("is_historical", False),
+        }
+        for d in (payload.get("daily_timeline") or [])
+    ]
+    exposure_data = {
+        **(payload.get("exposure_summary") or {}),
+        "risk_factors_max": payload.get("risk_factors_max", {}),
+        "primary_concerns": (payload.get("primary_concerns") or [])[:4],
+        "recommended_actions": (payload.get("recommended_actions") or [])[:4],
+        "daily_timeline": timeline_brief,
+    }
+    exposure_json = json.dumps(exposure_data, indent=2)
 
     llm = get_chat_model()
     if not llm:
@@ -1324,26 +1497,65 @@ def _get_legacy_chain():
         _legacy_prompt = ChatPromptTemplate.from_messages([
             (
                 "system",
-                "You are a Weather Agent for a manufacturing supply chain. "
-                "You receive normalized weather data for shipment routes and "
-                "must produce structured weather risk pointers and potential "
-                "opportunities. Return ONLY valid JSON.",
+                (
+                    "You are a production supply chain weather risk analyst. You receive "
+                    "real-time weather observations for cities on a shipment route and produce "
+                    "ONLY risks and opportunities that are directly and objectively supported "
+                    "by the measured data. This output drives automated operational decisions "
+                    "— accuracy is critical.\n\n"
+                    "RISK CLASSIFICATION THRESHOLDS (use these exactly):\n"
+                    "- Wind: >30 km/h = low risk, >50 km/h = high risk, >80 km/h = critical\n"
+                    "- Precipitation: >2 mm = low risk, >10 mm = high risk, >25 mm = critical\n"
+                    "- Temperature: >35°C or <-5°C = moderate risk, >40°C or <-15°C = high/critical\n"
+                    "- Visibility: <5 km = low risk, <2 km = high risk, <1 km = critical\n"
+                    "- Humidity >90% with temp >25°C = moderate heat-stress risk\n"
+                    "- Storms/thunderstorms in condition text = high risk minimum\n"
+                    "- Snow/ice/blizzard in condition text = high risk minimum for road freight\n\n"
+                    "ACCURACY RULES:\n"
+                    "1. Only flag a risk when measured values EXCEED the thresholds above. "
+                    "Normal weather (clear skies, moderate temp, light breeze) is NOT a risk.\n"
+                    "2. For mild/favorable weather, produce an opportunity — do NOT invent risks.\n"
+                    "3. Severity MUST match the threshold bands above — never inflate or deflate.\n"
+                    "4. Descriptions MUST quote the exact measured values from the data "
+                    "(e.g., 'wind at 62 km/h', 'temperature 42°C', 'visibility 0.8 km').\n"
+                    "5. estimatedCost and estimatedValue must always be null — never guess "
+                    "monetary values without actual cost data.\n"
+                    "6. estimatedImpact must describe the specific operational consequence "
+                    "(e.g., 'road freight delays of 4-8 hours', 'port crane operations suspended', "
+                    "'outdoor loading halted') — not vague language like 'may cause issues'.\n"
+                    "7. affectedSupplier should be null unless you can identify it from context.\n"
+                    "8. Return ONLY valid JSON. No markdown, no explanation, no code fences, "
+                    "no text before or after the JSON object."
+                ),
             ),
             (
                 "user",
-                "Analyze the following per-city weather data for supply chain "
-                "weather risks and opportunities.\n\nWeather JSON:\n"
-                "{weather_items_json}\n\nReturn JSON of shape:\n"
-                '{{"risks": [{{"title": str, "description": str, "severity": '
-                '"low"|"medium"|"high"|"critical", "affectedRegion": str|null, '
-                '"affectedSupplier": str|null, "estimatedImpact": str|null, '
-                '"estimatedCost": number|null}}], '
-                '"opportunities": [{{"title": str, "description": str, '
-                '"type": "cost_saving"|"time_saving"|"quality_improvement"|'
-                '"market_expansion"|"supplier_diversification", '
-                '"affectedRegion": str|null, "potentialBenefit": str|null, '
-                '"estimatedValue": number|null}}]}}\n'
-                "If none, use empty arrays.",
+                (
+                    "Analyze the weather data below for supply chain risks and opportunities.\n\n"
+                    "WEATHER DATA BY CITY:\n{weather_items_json}\n\n"
+                    "INSTRUCTIONS:\n"
+                    "- For each city with adverse conditions exceeding the thresholds, create one risk entry.\n"
+                    "- For each city with calm/favorable conditions, create one opportunity entry.\n"
+                    "- Cities with unremarkable, average weather get NO entry (skip them).\n"
+                    "- If ALL cities have normal weather, return empty risks array and one "
+                    "combined opportunity.\n\n"
+                    "Return ONLY this JSON structure:\n"
+                    '{{"risks": [{{"title": "<city>: <specific condition e.g. Heavy rain warning>", '
+                    '"description": "<Must quote exact values: temperature Xc, wind Y km/h, '
+                    'precipitation Z mm, visibility W km, condition: text>", '
+                    '"severity": "low"|"moderate"|"high"|"critical", '
+                    '"affectedRegion": "<city, country>", '
+                    '"affectedSupplier": null, '
+                    '"estimatedImpact": "<specific operational impact with estimated delay/disruption>", '
+                    '"estimatedCost": null}}], '
+                    '"opportunities": [{{"title": "<city>: <favorable condition>", '
+                    '"description": "<cite actual favorable values from data>", '
+                    '"type": "cost_saving"|"time_saving"|"quality_improvement"|'
+                    '"market_expansion"|"supplier_diversification", '
+                    '"affectedRegion": "<city, country>", '
+                    '"potentialBenefit": "<specific benefit: e.g. clear window for expedited shipping>", '
+                    '"estimatedValue": null}}]}}'
+                ),
             ),
         ])
     return _legacy_prompt | llm
