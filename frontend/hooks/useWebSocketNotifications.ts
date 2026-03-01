@@ -127,22 +127,23 @@ export function useWebSocketNotifications() {
             oemName: data.oemName,
             details: data.details,
           });
-          // Merge into agent-status so AgentStatus component shows progress
+          // Merge into agent-status so AgentStatus component shows progress.
+          // Never set status to 'completed' here — only the workflow-level
+          // agent_status message should mark the workflow as completed.
           queryClient.setQueryData<AgentStatus | undefined>(
             ['agent-status'],
             (prev) => {
               if (!prev) return prev;
-              const isCompleted = data.step === 'completed';
+              const isAgentDone = data.step === 'agent_done' || data.step === 'context_done';
               const label = data.supplierName
                 ? `[News - ${data.supplierName}]`
                 : '[News]';
               return {
                 ...prev,
-                status: isCompleted ? 'completed' : 'analyzing',
+                status: 'analyzing',
                 currentTask: `${label} ${data.message}`,
                 lastUpdated: new Date().toISOString(),
-                // Update counters when the news agent completes
-                ...(isCompleted && data.details
+                ...(isAgentDone && data.details
                   ? {
                       risksDetected:
                         prev.risksDetected +
@@ -169,16 +170,16 @@ export function useWebSocketNotifications() {
             ['agent-status'],
             (prev) => {
               if (!prev) return prev;
-              const isCompleted = data.step === 'completed';
+              const isAgentDone = data.step === 'agent_done';
               const label = data.supplierName
                 ? `[Weather - ${data.supplierName}]`
                 : '[Weather]';
               return {
                 ...prev,
-                status: isCompleted ? 'completed' : 'analyzing',
+                status: 'analyzing',
                 currentTask: `${label} ${data.message}`,
                 lastUpdated: new Date().toISOString(),
-                ...(isCompleted && data.details
+                ...(isAgentDone && data.details
                   ? {
                       risksDetected:
                         prev.risksDetected +
@@ -205,16 +206,16 @@ export function useWebSocketNotifications() {
             ['agent-status'],
             (prev) => {
               if (!prev) return prev;
-              const isCompleted = data.step === 'completed';
+              const isAgentDone = data.step === 'agent_done';
               const label = data.supplierName
                 ? `[Shipping - ${data.supplierName}]`
                 : '[Shipping]';
               return {
                 ...prev,
-                status: isCompleted ? 'completed' : 'analyzing',
+                status: 'analyzing',
                 currentTask: `${label} ${data.message}`,
                 lastUpdated: new Date().toISOString(),
-                ...(isCompleted && data.details
+                ...(isAgentDone && data.details
                   ? {
                       risksDetected:
                         prev.risksDetected +

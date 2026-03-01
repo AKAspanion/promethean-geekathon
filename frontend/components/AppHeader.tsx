@@ -19,7 +19,7 @@ export function AppHeader() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="heading-2 text-primary-dark dark:text-primary-light">
+            <h1 className="heading-3 text-primary-dark dark:text-primary-light">
               Predictive Supply Chain Agent
             </h1>
             <p className="body-text text-medium-gray dark:text-gray-400 text-base">

@@ -16,7 +16,7 @@
   --light-gray: #d1d5db;
   --off-white: #f9fafb;
   /* Typography – Satoshi */
-  --font-satoshi: 'Satoshi', system-ui, sans-serif;
+  --font-satoshi: "Satoshi", system-ui, sans-serif;
   --text-heading-1: 2.5rem;
   --text-heading-1-weight: 700;
   --text-heading-1-leading: 1.2;
@@ -74,7 +74,7 @@ body {
   font-weight: var(--text-heading-1-weight);
   line-height: var(--text-heading-1-leading);
 }
-.heading-2 {
+.heading-3 {
   font-family: var(--font-satoshi);
   font-size: var(--text-heading-2);
   font-weight: var(--text-heading-2-weight);

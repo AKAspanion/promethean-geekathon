@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { formatDistanceToNow } from "date-fns";
+import { safeFormatDistanceToNow } from "@/lib/format-date";
 import {
   risksApi,
   suppliersApi,
@@ -102,7 +102,7 @@ function NewsRiskCard({ risk }: { risk: Risk }) {
       <div className="flex items-start justify-between gap-3 mb-2">
         <div className="flex items-start gap-2 min-w-0">
           <span
-            className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${severityDot[risk.severity] ?? "bg-gray-400"}`}
+            className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${severityDot[risk.severity] ?? "bg-gray-400 dark:bg-gray-500"}`}
           />
           <h3 className="text-[14px] font-semibold leading-snug text-dark-gray dark:text-gray-100">
             {risk.title}
@@ -165,7 +165,7 @@ function NewsRiskCard({ risk }: { risk: Risk }) {
           </span>
         )}
         <span className="ml-auto text-medium-gray dark:text-gray-500 shrink-0">
-          {formatDistanceToNow(new Date(risk.createdAt), { addSuffix: true })}
+          {safeFormatDistanceToNow(risk.createdAt, { addSuffix: true })}
         </span>
       </div>
     </div>
@@ -321,7 +321,7 @@ function TrendInsightCard({ insight }: { insight: TrendInsightItem }) {
           <span
             className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
               isRisk
-                ? (severityDot[insight.severity ?? ""] ?? "bg-gray-400")
+                ? (severityDot[insight.severity ?? ""] ?? "bg-gray-400 dark:bg-gray-500")
                 : "bg-emerald-500"
             }`}
           />
@@ -387,7 +387,7 @@ function TrendInsightCard({ insight }: { insight: TrendInsightItem }) {
           </span>
         )}
         <span className="ml-auto text-medium-gray dark:text-gray-500 shrink-0">
-          {formatDistanceToNow(new Date(insight.createdAt), {
+          {safeFormatDistanceToNow(insight.createdAt, {
             addSuffix: true,
           })}
         </span>
@@ -792,7 +792,7 @@ export function NewsRiskDashboard() {
           </div>
           {oemScore.createdAt && (
             <p className="mt-2 text-[11px] text-medium-gray dark:text-gray-500">
-              Last updated {formatDistanceToNow(new Date(oemScore.createdAt), { addSuffix: true })}
+              Last updated {safeFormatDistanceToNow(oemScore.createdAt, { addSuffix: true })}
             </p>
           )}
         </section>
@@ -857,7 +857,7 @@ export function NewsRiskDashboard() {
                         ? "bg-yellow-500"
                         : level === "low"
                           ? "bg-green-500"
-                          : "bg-gray-400";
+                          : "bg-gray-400 dark:bg-gray-500";
 
                 return (
                   <button

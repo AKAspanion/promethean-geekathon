@@ -212,12 +212,23 @@ risks for a supplier, provide an aggregated risk score from 0 to 100
 (decimals allowed). A score of 0 means no risk at all, and 100 means
 extremely critical risk requiring immediate action.
 
-Consider the following when scoring:
-- Number of risks detected
-- Severity distribution (critical, high, medium, low)
-- Types of risks (factory shutdown, bankruptcy, sanctions are more severe)
-- Geographic concentration of risks
-- Potential cascading effects
+CRITICAL SCORING GUIDELINES — be conservative and proportional:
+- Only risks that DIRECTLY and CONCRETELY affect this specific supplier's
+  operations should drive the score significantly.
+- Weather risks: moderate weather (wind 30-50 km/h, light rain, mild temperatures)
+  is NORMAL for supply chains and should contribute very little (0-15 points max).
+  Only severe weather (storms, blizzards, extreme heat >40C, visibility <1km) should
+  push weather contribution above 20 points.
+- News/geopolitical risks: only score highly if the risk DIRECTLY names or clearly
+  affects this supplier, its region, or its specific supply routes. Broad global
+  tensions with no direct link should be scored low (0-10 points contribution).
+- Shipping risks: weight most heavily as they represent actual measurable delays.
+- A score of 0-25 = LOW (normal operations, minor issues)
+- A score of 26-50 = MEDIUM (some disruptions requiring monitoring)
+- A score of 51-75 = HIGH (significant confirmed disruptions)
+- A score of 76-100 = CRITICAL (severe, confirmed, direct operational impact)
+- Most suppliers under normal conditions should score 0-30. Scores above 50 require
+  confirmed severe disruptions, not just multiple moderate weather observations.
 
 Supplier: {supplier_name}
 OEM: {oem_name}
@@ -835,6 +846,25 @@ async def _process_next_supplier(
         len(shipping_result.get("risks") or []),
     )
 
+    # -- 1a. Persist full agent states for later retrieval ---------------------
+    from app.models.agent_run_data import AgentRunData
+
+    if supplier_id_uuid:
+        for agent_type, agent_result in [
+            ("weather", weather_result),
+            ("news_supplier", supplier_result),
+            ("news_global", global_result),
+            ("shipping", shipping_result),
+        ]:
+            db.add(AgentRunData(
+                oemId=oem_id,
+                supplierId=supplier_id_uuid,
+                workflowRunId=workflow_run_id,
+                agentType=agent_type,
+                finalState=agent_result,
+            ))
+        db.commit()
+
     raw_risks = (
         (supplier_result.get("risks") or [])
         + (global_result.get("risks") or [])
@@ -1186,7 +1216,23 @@ async def _aggregate_oem_score(
         }
         for r in all_risks_orm
     ]
-    overall, breakdown, severity_counts = compute_score_from_dicts(risk_dicts)
+    # Breakdown & severity_counts from pooled risks (for informational display).
+    _, breakdown, severity_counts = compute_score_from_dicts(risk_dicts)
+
+    # ── OEM score = weighted blend of per-supplier scores ─────────────────
+    supplier_results = state.get("supplier_results") or []
+    supplier_scores = [
+        sr.get("unified_score") or 0.0 for sr in supplier_results
+    ]
+
+    if supplier_scores:
+        avg_score = sum(supplier_scores) / len(supplier_scores)
+        max_score = max(supplier_scores)
+        # 60% average + 40% worst-case supplier
+        overall = round(0.6 * avg_score + 0.4 * max_score, 2)
+    else:
+        overall = 0.0
+
     oem_risk_level = score_to_level(overall)
 
     # Generate an executive summary for the OEM risk score
@@ -1212,8 +1258,11 @@ async def _aggregate_oem_score(
     db.commit()
 
     logger.info(
-        "RiskAnalysisGraph: OEM %s — overall_score=%.2f level=%s risks=%d summary=%s",
-        state["oem_id"], overall, oem_risk_level, len(all_risks_orm),
+        "RiskAnalysisGraph: OEM %s — overall_score=%.2f level=%s "
+        "supplier_scores=%s risks=%d summary=%s",
+        state["oem_id"], overall, oem_risk_level,
+        [round(s, 2) for s in supplier_scores],
+        len(all_risks_orm),
         (summary or "")[:80],
     )
 

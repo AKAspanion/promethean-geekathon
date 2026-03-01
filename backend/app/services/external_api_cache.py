@@ -18,7 +18,7 @@ from app.models.external_api_log import ExternalApiLog
 
 logger = logging.getLogger(__name__)
 
-CACHE_TTL_SECONDS = 3600  # 1 hour
+CACHE_TTL_SECONDS = 600  # 10 minutes
 
 # key -> (expiry_ts, status_code, body)
 _cache: dict[str, tuple[float, int, dict | list]] = {}
@@ -167,9 +167,11 @@ async def cached_get(
         )
         return response
 
-    expiry_ts = time.monotonic() + CACHE_TTL_SECONDS
-    async with _lock:
-        _cache[key] = (expiry_ts, response.status_code, body)
+    # Only cache successful responses — never cache 4xx/5xx errors
+    if response.status_code < 400:
+        expiry_ts = time.monotonic() + CACHE_TTL_SECONDS
+        async with _lock:
+            _cache[key] = (expiry_ts, response.status_code, body)
 
     await _log_external_api_call(
         service=service,

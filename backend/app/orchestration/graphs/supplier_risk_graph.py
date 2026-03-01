@@ -42,8 +42,12 @@ logger = logging.getLogger(__name__)
 # ── Scoring constants (mirrors agent_service.py) ──────────────────────────────
 
 SEVERITY_WEIGHT: dict[str, int] = {"critical": 4, "high": 3, "medium": 2, "low": 1}
-DOMAIN_WEIGHTS: dict[str, float] = {"weather": 1.0, "shipping": 1.3, "news": 1.1, "geopolitical": 1.5}
-RISK_SCORE_CURVE_K: float = 12.0
+# Weather weight reduced — only severe/direct weather events should significantly
+# affect the supplier score. Moderate weather along a route is normal.
+DOMAIN_WEIGHTS: dict[str, float] = {"weather": 0.6, "shipping": 1.3, "news": 1.1, "geopolitical": 1.5}
+# Higher K value = gentler curve, requires more weight to reach high scores.
+# Prevents a handful of moderate risks from saturating the score.
+RISK_SCORE_CURVE_K: float = 18.0
 
 
 # ── Public scoring utilities (re-used by OemOrchestrationGraph) ───────────────
@@ -86,10 +90,10 @@ def compute_score_from_dicts(risks: list[dict]) -> tuple[float, dict, dict]:
                 "weather_exposure_score"
             )
             if isinstance(exposure, (int, float)):
-                if exposure >= 80:
-                    pointer_boost = 1.4
-                elif exposure >= 60:
+                # Only boost for truly extreme weather — moderate exposure is normal
+                if exposure >= 85:
                     pointer_boost = 1.2
+                # No boost for exposure < 85; the base severity weight is sufficient
         elif src == "news":
             risk_type = (src_data or {}).get("risk_type")
             if risk_type in {"war", "armed_conflict"}:

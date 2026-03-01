@@ -108,7 +108,7 @@ function SeverityBadge({ severity }: { severity: string }) {
 
 // ─── Section: Exposure overview ───────────────────────────────────────────────
 
-function ExposureOverview({ risk }: { risk: WeatherRisk }) {
+export function ExposureOverview({ risk }: { risk: WeatherRisk }) {
   const exp = risk.sourceData?.weatherExposure ?? {};
   const expScore = exp.weather_exposure_score ?? 0;
   const peakScore = exp.peak_risk_score ?? 0;
@@ -323,7 +323,7 @@ function DayRiskTimeline({ dayRisks }: { dayRisks: WeatherRisk[] }) {
             return (
               <div
                 key={i}
-                className={`min-w-[180px] flex-shrink-0 rounded-xl border ${colors.border} ${colors.bg} dark:border-gray-600 dark:bg-gray-700/40 p-3 space-y-2`}
+                className={`min-w-45 shrink-0 rounded-xl border ${colors.border} ${colors.bg} p-3 space-y-2`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div>

@@ -1,18 +1,26 @@
-'use client';
+"use client";
 
-import { useState, useEffect } from 'react';
-import { ShipmentExposureSummary } from '@/components/WeatherAgentComponents';
-import { fetchShipmentWeatherExposure, suppliersApi, type Supplier } from '@/lib/api';
-import { useAuth } from '@/lib/auth-context';
-import type { WeatherGraphResponse } from '@/lib/types';
+import { useState, useEffect } from "react";
+import { ShipmentExposureSummary } from "@/components/WeatherAgentComponents";
+import {
+  fetchShipmentWeatherExposure,
+  suppliersApi,
+  type Supplier,
+} from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
+import type { WeatherGraphResponse } from "@/lib/types";
 
 function riskLevelClass(level: string | null | undefined): string {
-  const l = (level || '').toLowerCase();
-  if (l === 'low') return 'text-cyan-600 dark:text-cyan-400 bg-cyan-50 dark:bg-cyan-900/20 border-cyan-200 dark:border-cyan-800/50';
-  if (l === 'medium' || l === 'moderate') return 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800/50';
-  if (l === 'high') return 'text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800/50';
-  if (l === 'critical') return 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800/50';
-  return 'text-medium-gray dark:text-gray-400 bg-light-gray/50 dark:bg-gray-700 border-light-gray dark:border-gray-600';
+  const l = (level || "").toLowerCase();
+  if (l === "low")
+    return "text-cyan-600 dark:text-cyan-400 bg-cyan-50 dark:bg-cyan-900/20 border-cyan-200 dark:border-cyan-800/50";
+  if (l === "medium" || l === "moderate")
+    return "text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800/50";
+  if (l === "high")
+    return "text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800/50";
+  if (l === "critical")
+    return "text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800/50";
+  return "text-medium-gray dark:text-gray-400 bg-light-gray/50 dark:bg-gray-700 border-light-gray dark:border-gray-600";
 }
 
 export default function WeatherPage() {
@@ -29,10 +37,18 @@ export default function WeatherPage() {
     setLoadingSuppliers(true);
     suppliersApi
       .getAll()
-      .then((list) => { if (!cancelled) setSuppliers(Array.isArray(list) ? list : []); })
-      .catch(() => { if (!cancelled) setSuppliers([]); })
-      .finally(() => { if (!cancelled) setLoadingSuppliers(false); });
-    return () => { cancelled = true; };
+      .then((list) => {
+        if (!cancelled) setSuppliers(Array.isArray(list) ? list : []);
+      })
+      .catch(() => {
+        if (!cancelled) setSuppliers([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingSuppliers(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleSelectSupplier = async (supplier: Supplier) => {
@@ -45,7 +61,7 @@ export default function WeatherPage() {
       const result = await fetchShipmentWeatherExposure(supplier.id);
       setData(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong.');
+      setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
       setRunning(false);
     }
@@ -65,15 +81,16 @@ export default function WeatherPage() {
           Weather‑aware Supply Chain Risk
         </h2>
         <p className="text-[16px] leading-relaxed text-medium-gray dark:text-gray-400">
-          Select a supplier to analyse weather exposure from Supplier →{' '}
-          <span className="font-semibold text-dark-gray dark:text-gray-200">{oem?.name ?? 'OEM'}</span>
-          {' '}— risks and opportunities identified automatically.
+          Select a supplier to analyse weather exposure from Supplier →{" "}
+          <span className="font-semibold text-dark-gray dark:text-gray-200">
+            {oem?.name ?? "OEM"}
+          </span>{" "}
+          — risks and opportunities identified automatically.
         </p>
       </div>
 
       {/* Two-column layout */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[280px_1fr] items-start">
-
         {/* Left column — supplier list */}
         <div className="flex flex-col gap-3 rounded-2xl border border-light-gray dark:border-gray-600 bg-white dark:bg-gray-800 p-4 shadow-sm">
           <div>
@@ -106,8 +123,8 @@ export default function WeatherPage() {
                       disabled={running}
                       className={`w-full flex flex-col gap-1 rounded-xl border px-3 py-2.5 text-left transition-all hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-60 ${
                         isSelected
-                          ? 'border-primary-dark dark:border-primary-light bg-primary-dark/5 dark:bg-primary-light/10 ring-1 ring-primary-dark dark:ring-primary-light'
-                          : 'border-transparent hover:border-light-gray dark:hover:border-gray-600 hover:bg-light-gray/40 dark:hover:bg-gray-700/40'
+                          ? "border-primary-dark dark:border-primary-light bg-primary-dark/5 dark:bg-primary-light/10 ring-1 ring-primary-dark dark:ring-primary-light"
+                          : "border-light-gray/80 dark:border-border-gray-600 hover:border-light-gray dark:hover:border-gray-600 hover:bg-light-gray/40 dark:hover:bg-gray-700/40"
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2 min-w-0">
@@ -123,11 +140,13 @@ export default function WeatherPage() {
                       </div>
                       {(s.city || s.country) && (
                         <span className="text-[11px] text-medium-gray dark:text-gray-500 truncate">
-                          {[s.city, s.country].filter(Boolean).join(', ')}
+                          {[s.city, s.country].filter(Boolean).join(", ")}
                         </span>
                       )}
                       {s.latestRiskLevel && (
-                        <span className={`self-start rounded-full border px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide ${riskLevelClass(s.latestRiskLevel)}`}>
+                        <span
+                          className={`self-start rounded-full border px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide ${riskLevelClass(s.latestRiskLevel)}`}
+                        >
                           {s.latestRiskLevel}
                         </span>
                       )}
@@ -144,12 +163,19 @@ export default function WeatherPage() {
           {running && selectedSupplier && (
             <div className="flex items-center gap-3 rounded-xl border border-primary-light/30 dark:border-primary-light/20 bg-sky-blue/20 dark:bg-gray-700/40 px-4 py-3 text-[13px] text-primary-dark dark:text-primary-light">
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary-dark dark:border-primary-light border-t-transparent" />
-              Analysing weather exposure for <span className="font-semibold ml-1">{selectedSupplier.name}</span>…
+              Analysing weather exposure for{" "}
+              <span className="font-semibold ml-1">
+                {selectedSupplier.name}
+              </span>
+              …
             </div>
           )}
 
           {error && (
-            <p className="text-[14px] text-red-600 dark:text-red-400" role="alert">
+            <p
+              className="text-[14px] text-red-600 dark:text-red-400"
+              role="alert"
+            >
               {error}
             </p>
           )}
@@ -168,7 +194,6 @@ export default function WeatherPage() {
 
           {data && <ShipmentExposureSummary data={data} />}
         </div>
-
       </div>
     </main>
   );

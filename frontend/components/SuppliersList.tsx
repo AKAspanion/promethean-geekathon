@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { suppliersApi, Supplier } from "@/lib/api";
 import { CircularScore } from "@/components/CircularScore";
@@ -14,6 +14,7 @@ const riskLevelColors: Record<string, string> = {
 };
 
 export function SuppliersList() {
+  const router = useRouter();
   const { data: suppliers, isLoading } = useQuery<Supplier[]>({
     queryKey: ["suppliers"],
     queryFn: suppliersApi.getAll,
@@ -61,84 +62,105 @@ export function SuppliersList() {
         </span>
       </div>
 
-      <div className="space-y-4">
-        {suppliers.map((supplier) => {
-          const swarm = supplier.swarm;
-          const riskLevel = supplier.latestRiskLevel ?? "LOW";
-          const riskColor = riskLevelColors[riskLevel] ?? riskLevelColors.LOW;
-          const hasScore = supplier.latestRiskScore != null;
-
-          // Derive risk count from swarm agents (latest run only)
-          const swarmRiskCount = swarm
-            ? swarm.agents.reduce(
-                (sum, agent) =>
-                  sum + ((agent.metadata as Record<string, unknown>)?.riskCount as number ?? 0),
-                0
+      <div className="-mx-6 overflow-x-auto">
+        <table className="w-full text-sm text-left">
+          <thead>
+            <tr className="bg-gray-50 dark:bg-gray-700/40 border-y border-light-gray dark:border-gray-700 text-xs text-medium-gray dark:text-gray-400 uppercase tracking-wider">
+              <th className="px-6 py-3 font-medium">Supplier</th>
+              <th className="px-4 py-3 font-medium">Country</th>
+              <th className="px-4 py-3 font-medium">Commodities</th>
+              <th className="px-4 py-3 font-medium">Risk Level</th>
+              <th className="px-4 py-3 font-medium">Score</th>
+              <th className="px-6 py-3 font-medium">Insights</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-light-gray dark:divide-gray-700 [&>tr:last-child]:border-b [&>tr:last-child]:border-light-gray dark:[&>tr:last-child]:border-gray-700">
+            {[...suppliers]
+              .sort(
+                (a, b) =>
+                  new Date(b.updatedAt).getTime() -
+                  new Date(a.updatedAt).getTime()
               )
-            : 0;
-          const swarmTopDriver = swarm?.topDrivers?.find((d) => d.trim()) ?? null;
+              .map((supplier) => {
+              const swarm = supplier.swarm;
+              const riskLevel = supplier.latestRiskLevel ?? "LOW";
+              const riskColor =
+                riskLevelColors[riskLevel] ?? riskLevelColors.LOW;
+              const hasScore = supplier.latestRiskScore != null;
 
-          return (
-            <Link
-              key={supplier.id}
-              href={`/suppliers/${supplier.id}`}
-              className="block border border-light-gray dark:border-gray-600 rounded-lg p-4 hover:bg-off-white dark:hover:bg-gray-700/50 transition-colors"
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1 min-w-0">
-                  <h3 className="heading-3 text-dark-gray dark:text-gray-200 mb-1">
+              const swarmRiskCount = swarm
+                ? swarm.agents.reduce(
+                    (sum, agent) =>
+                      sum +
+                      (((agent.metadata as Record<string, unknown>)
+                        ?.riskCount as number) ?? 0),
+                    0
+                  )
+                : 0;
+              const swarmTopDriver =
+                swarm?.topDrivers?.find((d) => d.trim()) ?? null;
+
+              const country = supplier.country ?? "—";
+
+              return (
+                <tr
+                  key={supplier.id}
+                  onClick={() => router.push(`/suppliers/${supplier.id}`)}
+                  className="hover:bg-off-white dark:hover:bg-gray-700/50 transition-colors cursor-pointer"
+                >
+                  <td className="px-6 py-3 font-medium text-dark-gray dark:text-gray-200">
                     {supplier.name}
-                  </h3>
-                  <div className="flex flex-wrap gap-2 text-xs text-medium-gray dark:text-gray-400">
-                    {supplier.city && supplier.country && (
-                      <span>
-                        {supplier.city}, {supplier.country}
-                      </span>
-                    )}
-                    {!supplier.city && supplier.country && (
-                      <span>{supplier.country}</span>
-                    )}
-                    {supplier.region && <span>{supplier.region}</span>}
-                    {supplier.commodities && (
-                      <span>{supplier.commodities}</span>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex flex-col items-end gap-2 shrink-0">
-                  {hasScore && (
-                    <div className="flex items-center gap-3">
+                  </td>
+                  <td className="px-4 py-3 text-medium-gray dark:text-gray-400 whitespace-nowrap">
+                    {country}
+                  </td>
+                  <td className="px-4 py-3 text-medium-gray dark:text-gray-400">
+                    {supplier.commodities ?? "—"}
+                  </td>
+                  <td className="px-4 py-3">
+                    {hasScore ? (
                       <span
                         className={`px-2 py-1 rounded-lg text-xs font-medium ${riskColor}`}
                       >
                         {riskLevel}
                       </span>
-                      <CircularScore score={supplier.latestRiskScore!} size="sm" />
-                    </div>
-                  )}
-                  {swarmRiskCount > 0 && (
-                    <div className="text-xs text-medium-gray dark:text-gray-400 text-right">
-                      <div>{swarmRiskCount} risks detected</div>
-                      {swarmTopDriver && (
-                        <div className="truncate max-w-50">
-                          Top driver:{" "}
-                          <span className="font-medium">
-                            {swarmTopDriver}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {!hasScore && swarmRiskCount === 0 && (
-                    <span className="text-xs text-medium-gray dark:text-gray-400">
-                      No analysis yet
-                    </span>
-                  )}
-                </div>
-              </div>
-            </Link>
-          );
-        })}
+                    ) : (
+                      <span className="text-xs text-medium-gray dark:text-gray-400">
+                        —
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {hasScore ? (
+                      <CircularScore
+                        score={supplier.latestRiskScore!}
+                        size="sm"
+                      />
+                    ) : (
+                      <span className="text-xs text-medium-gray dark:text-gray-400">
+                        —
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-6 py-3 text-xs text-medium-gray dark:text-gray-400">
+                    {swarmRiskCount > 0 ? (
+                      <div>
+                        <div>{swarmRiskCount} risks detected</div>
+                        {swarmTopDriver && (
+                          <div className="truncate max-w-48">
+                            Top: <span className="font-medium">{swarmTopDriver}</span>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <span>No analysis yet</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );

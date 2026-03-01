@@ -1,4 +1,9 @@
-"""LLM-powered shipment risk analysis service."""
+"""LLM-powered shipment risk analysis service (home-screen flow).
+
+Uses the same system prompt and tracking pre-processing as the LangGraph
+dashboard flow (``app.agents.shipment``) via the shared module
+``app.services.shipping_shared``.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +18,13 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.supplier import Supplier
 from app.services.agent_types import OemScope
+from app.services.shipping_shared import (
+    SHIPMENT_FALLBACK_RESULT,
+    SHIPMENT_RISK_SYSTEM_PROMPT,
+    build_narrative_context,
+    extract_tracking_data_from_records,
+    parse_tracking_data_to_records,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,34 +39,6 @@ def _build_client() -> OpenAI:
     if base_url:
         return OpenAI(api_key=api_key, base_url=base_url)
     return OpenAI(api_key=api_key)
-
-
-SYSTEM_PROMPT = """You are a Shipment Risk Intelligence Agent for a manufacturing supply chain.
-
-You will be given JSON context containing:
-- oem: OEM details (id, name, locations, commodities)
-- supplier: Supplier details (name, city, country, region, commodities)
-- tracking: List of shipment tracking records for this supplier
-
-Your goals:
-1. Analyze the tracking timeline for delays, stagnation, and velocity anomalies.
-2. Calculate risk scores (0-100) for delay_risk, stagnation_risk, and velocity_risk.
-3. Identify specific risk factors from the data.
-4. Produce concrete, actionable recommendations to mitigate the risks.
-
-Return a single JSON object with this exact shape:
-{
-  "shipping_risk_score": <float 0.0-1.0>,
-  "risk_level": <"Low" | "Medium" | "High" | "Critical">,
-  "delay_risk": { "score": <0-100>, "label": <"low"|"medium"|"high"|"critical"> },
-  "stagnation_risk": { "score": <0-100>, "label": <"low"|"medium"|"high"|"critical"> },
-  "velocity_risk": { "score": <0-100>, "label": <"low"|"medium"|"high"|"critical"> },
-  "risk_factors": [<string>, ...],
-  "recommended_actions": [<string>, ...],
-  "shipment_metadata": { <summary of key fields> }
-}
-
-Respond strictly as a single JSON object; no prose outside JSON."""
 
 
 def _get_supplier(db: Session, supplier_id: str) -> dict[str, Any] | None:
@@ -140,56 +124,56 @@ def analyze_shipments_for_supplier(
     else:
         logger.debug("No supplierId in scope — cannot fetch tracking by supplier_id")
 
-    tracking_records = _get_tracking_for_supplier(str(supplier_id).strip() if supplier_id else None)
+    # Fetch raw records from mock server
+    raw_records = _get_tracking_for_supplier(str(supplier_id).strip() if supplier_id else None)
 
-    context = {
-        "oem": {
-            "id": scope.get("oemId"),
-            "name": scope.get("oemName"),
-            "locations": scope.get("locations"),
-            "commodities": scope.get("commodities"),
-        },
-        "supplier": supplier_data,
-        "tracking": tracking_records,
+    print(f"[ShipmentAgent] fetch_tracking — got {len(raw_records)} raw record(s)")
+    print(f"[ShipmentAgent] Raw tracking records:\n{json.dumps(raw_records, indent=2)}")
+
+    # Pre-process into structured records (same logic as dashboard flow)
+    tracking_data = extract_tracking_data_from_records(raw_records)
+    tracking_records = parse_tracking_data_to_records(tracking_data)
+
+    print(f"[ShipmentAgent] Parsed {len(tracking_records)} structured tracking record(s)")
+    print(f"[ShipmentAgent] Structured tracking_records:\n{json.dumps(tracking_records, indent=2, default=str)}")
+
+    oem_context = {
+        "id": scope.get("oemId"),
+        "name": scope.get("oemName"),
+        "locations": scope.get("locations"),
+        "commodities": scope.get("commodities"),
     }
 
-    print(f"\n[ShipmentAgent] LLM context being sent:")
-    print(f"  OEM   : id={context['oem']['id']}  name={context['oem']['name']}")
-    print(f"  Supplier: {json.dumps(supplier_data)}")
-    print(f"  Tracking records: {len(tracking_records)}")
-    print(f"  Tracking records: {json.dumps(tracking_records, indent=2)}")
+    # Build a human-readable narrative so the LLM reasons about route
+    # progress, timing, and risk signals rather than raw JSON blobs.
+    narrative = build_narrative_context(oem_context, supplier_data, tracking_records)
+
+    print(f"\n[ShipmentAgent] LLM narrative context being sent:")
+    print(narrative)
 
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": json.dumps({"context": context})},
+        {"role": "system", "content": SHIPMENT_RISK_SYSTEM_PROMPT},
+        {"role": "user", "content": narrative},
     ]
 
-    print(f"\n[ShipmentAgent] Calling LLM — model={settings.openai_model or 'gpt-4o'}")
+    print(f"\n[ShipmentAgent] Calling LLM — model={settings.openai_model}")
 
     response = client.chat.completions.create(
-        model=settings.openai_model or "gpt-4o",
+        model= "gpt-4o",
         response_format={"type": "json_object"},
         messages=messages,
     )
 
-    content = response.choices[0].message.content or "{}"
-    print(f"\n[ShipmentAgent] LLM raw response:\n{content}")
+    llm_content = response.choices[0].message.content or "{}"
 
     try:
-        data = json.loads(content)
-        print(f"\n[ShipmentAgent] LLM parsed result:\n{json.dumps(data, indent=2)}")
+        data = json.loads(llm_content)
     except json.JSONDecodeError:
         print("[ShipmentAgent] LLM response was not valid JSON — using fallback")
-        data = {
-            "shipping_risk_score": 0.5,
-            "risk_level": "Medium",
-            "delay_risk": {"score": 50, "label": "medium"},
-            "stagnation_risk": {"score": 50, "label": "medium"},
-            "velocity_risk": {"score": 0, "label": "low"},
-            "risk_factors": ["Model returned non-JSON response"],
-            "recommended_actions": [content],
-            "shipment_metadata": {"context": context},
-        }
+        data = dict(SHIPMENT_FALLBACK_RESULT)
+        data["risk_factors"] = ["Model returned non-JSON response"]
+        data["recommended_actions"] = [llm_content]
+        data["shipment_metadata"] = {"context": narrative}
 
     data.setdefault(
         "shipment_metadata",

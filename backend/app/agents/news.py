@@ -789,6 +789,11 @@ def _build_supplier_prompt(
                     "with that region.\n"
                     "- Never downgrade a war/armed conflict event to "
                     "'medium' or 'low' severity.\n\n"
+                    "IMPORTANT SCORING: Do NOT inflate severity for indirect or "
+                    "speculative risks with no confirmed direct link to the supplier. "
+                    "'critical' = confirmed shutdown, strike, sanctions, or imminent "
+                    "bankruptcy directly involving this supplier. If news is vague "
+                    "or only loosely related, either skip it or rate it 'low'.\n\n"
                     "Also extract positive opportunities (new trade deals, "
                     "capacity expansions, cost reductions, partnerships). "
                     "Not every article is a risk — look for positive "
@@ -853,7 +858,6 @@ def _build_global_prompt(
             (
                 "system",
                 (
-                    "You are a global supply chain News Agent. You "
                     "receive real-time and recent news (sourced from "
                     "NewsAPI /everything, /top-headlines, and broad "
                     "headline scanning) about macro events (geopolitics, "
@@ -913,10 +917,12 @@ def _build_global_prompt(
                     "with that region.\n"
                     "- Never downgrade a war/armed conflict event to "
                     "'medium' or 'low' severity.\n\n"
-                    "IMPORTANT: News articles may be in any language. "
-                    "Always return all extracted fields in English.\n\n"
-                    "Only set estimatedCost when the article provides a "
-                    "concrete figure. Do not guess or fabricate costs."
+                    "IMPORTANT: Be conservative with severity for distant "
+                    "macro events — rate 'high' or 'critical' only when there "
+                    "is confirmed, direct impact on this supplier. News "
+                    "articles may be in any language; return all extracted "
+                    "fields in English. Only set estimatedCost when the "
+                    "article provides a concrete figure."
                 ),
             ),
             (
@@ -1016,7 +1022,7 @@ async def _news_risk_llm_node(state: NewsAgentState) -> NewsAgentState:
             context, call_id, provider, model_name, len(prompt_text),
         )
         await _broadcast_progress(
-            "llm_start", f"Running {context} risk extraction via {provider}",
+            "llm_start", f"Running {context} risk extraction",
             context, {"call_id": call_id, "provider": provider, "model": str(model_name)},
             oem_name=oem_name, supplier_name=supplier_name,
         )
@@ -1245,4 +1251,10 @@ async def run_news_agent_graph(
         oem_name=oem_label, supplier_name=sup_label,
     )
 
-    return {"risks": risks_for_db, "opportunities": opps_for_db}
+    return {
+        "risks": risks_for_db,
+        "opportunities": opps_for_db,
+        "newsapi_raw": final_state.get("newsapi_raw") or [],
+        "gdelt_raw": final_state.get("gdelt_raw") or [],
+        "news_items": [dict(item) for item in (final_state.get("news_items") or [])],
+    }

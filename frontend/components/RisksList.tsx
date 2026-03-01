@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { risksApi, Risk } from '@/lib/api';
-import { formatDistanceToNow } from 'date-fns';
+import { safeFormatDistanceToNow } from '@/lib/format-date';
 
 const severityColors = {
   low: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400',
@@ -77,7 +77,7 @@ export function RisksList() {
               {risk.mitigationPlans && risk.mitigationPlans.length > 0 && (
                 <span>📋 {risk.mitigationPlans.length} plan(s)</span>
               )}
-              <span>{formatDistanceToNow(new Date(risk.createdAt), { addSuffix: true })}</span>
+              <span>{safeFormatDistanceToNow(risk.createdAt, { addSuffix: true })}</span>
             </div>
           </div>
         ))}
