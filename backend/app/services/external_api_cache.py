@@ -18,7 +18,7 @@ from app.models.external_api_log import ExternalApiLog
 
 logger = logging.getLogger(__name__)
 
-CACHE_TTL_SECONDS = 3600  # 1 hour
+CACHE_TTL_SECONDS = 600  # 10 minutes
 
 # key -> (expiry_ts, status_code, body)
 _cache: dict[str, tuple[float, int, dict | list]] = {}
