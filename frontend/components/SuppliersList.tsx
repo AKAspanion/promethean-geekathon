@@ -70,7 +70,7 @@ export function SuppliersList() {
               <th className="px-4 py-3 font-medium">Country</th>
               <th className="px-4 py-3 font-medium">Commodities</th>
               <th className="px-4 py-3 font-medium">Risk Level</th>
-              <th className="px-4 py-3 font-medium">Score</th>
+              <th className="px-4 py-3 font-medium">Risk Score</th>
               <th className="px-6 py-3 font-medium">Insights</th>
             </tr>
           </thead>
@@ -79,86 +79,89 @@ export function SuppliersList() {
               .sort(
                 (a, b) =>
                   new Date(b.updatedAt).getTime() -
-                  new Date(a.updatedAt).getTime()
+                  new Date(a.updatedAt).getTime(),
               )
               .map((supplier) => {
-              const swarm = supplier.swarm;
-              const riskLevel = supplier.latestRiskLevel ?? "LOW";
-              const riskColor =
-                riskLevelColors[riskLevel] ?? riskLevelColors.LOW;
-              const hasScore = supplier.latestRiskScore != null;
+                const swarm = supplier.swarm;
+                const riskLevel = supplier.latestRiskLevel ?? "LOW";
+                const riskColor =
+                  riskLevelColors[riskLevel] ?? riskLevelColors.LOW;
+                const hasScore = supplier.latestRiskScore != null;
 
-              const swarmRiskCount = swarm
-                ? swarm.agents.reduce(
-                    (sum, agent) =>
-                      sum +
-                      (((agent.metadata as Record<string, unknown>)
-                        ?.riskCount as number) ?? 0),
-                    0
-                  )
-                : 0;
-              const swarmTopDriver =
-                swarm?.topDrivers?.find((d) => d.trim()) ?? null;
+                const swarmRiskCount = swarm
+                  ? swarm.agents.reduce(
+                      (sum, agent) =>
+                        sum +
+                        (((agent.metadata as Record<string, unknown>)
+                          ?.riskCount as number) ?? 0),
+                      0,
+                    )
+                  : 0;
+                const swarmTopDriver =
+                  swarm?.topDrivers?.find((d) => d.trim()) ?? null;
 
-              const country = supplier.country ?? "—";
+                const country = supplier.country ?? "—";
 
-              return (
-                <tr
-                  key={supplier.id}
-                  onClick={() => router.push(`/suppliers/${supplier.id}`)}
-                  className="hover:bg-off-white dark:hover:bg-gray-700/50 transition-colors cursor-pointer"
-                >
-                  <td className="px-6 py-3 font-medium text-dark-gray dark:text-gray-200">
-                    {supplier.name}
-                  </td>
-                  <td className="px-4 py-3 text-medium-gray dark:text-gray-400 whitespace-nowrap">
-                    {country}
-                  </td>
-                  <td className="px-4 py-3 text-medium-gray dark:text-gray-400">
-                    {supplier.commodities ?? "—"}
-                  </td>
-                  <td className="px-4 py-3">
-                    {hasScore ? (
-                      <span
-                        className={`px-2 py-1 rounded-lg text-xs font-medium ${riskColor}`}
-                      >
-                        {riskLevel}
-                      </span>
-                    ) : (
-                      <span className="text-xs text-medium-gray dark:text-gray-400">
-                        —
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    {hasScore ? (
-                      <CircularScore
-                        score={supplier.latestRiskScore!}
-                        size="sm"
-                      />
-                    ) : (
-                      <span className="text-xs text-medium-gray dark:text-gray-400">
-                        —
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-6 py-3 text-xs text-medium-gray dark:text-gray-400">
-                    {swarmRiskCount > 0 ? (
-                      <div>
-                        <div>{swarmRiskCount} risks detected</div>
-                        {swarmTopDriver && (
-                          <div className="truncate max-w-48">
-                            Top: <span className="font-medium">{swarmTopDriver}</span>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <span>No analysis yet</span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
+                return (
+                  <tr
+                    key={supplier.id}
+                    onClick={() => router.push(`/suppliers/${supplier.id}`)}
+                    className="hover:bg-off-white dark:hover:bg-gray-700/50 transition-colors cursor-pointer"
+                  >
+                    <td className="px-6 py-3 font-medium text-dark-gray dark:text-gray-200">
+                      {supplier.name}
+                    </td>
+                    <td className="px-4 py-3 text-medium-gray dark:text-gray-400 whitespace-nowrap">
+                      {country}
+                    </td>
+                    <td className="px-4 py-3 text-medium-gray dark:text-gray-400">
+                      {supplier.commodities ?? "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      {hasScore ? (
+                        <span
+                          className={`px-2 py-1 rounded-lg text-xs font-medium ${riskColor}`}
+                        >
+                          {riskLevel}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-medium-gray dark:text-gray-400">
+                          —
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {hasScore ? (
+                        <CircularScore
+                          score={supplier.latestRiskScore!}
+                          size="sm"
+                        />
+                      ) : (
+                        <span className="text-xs text-medium-gray dark:text-gray-400">
+                          —
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-6 py-3 text-xs text-medium-gray dark:text-gray-400">
+                      {swarmRiskCount > 0 ? (
+                        <div>
+                          <div>{swarmRiskCount} risks detected</div>
+                          {swarmTopDriver && (
+                            <div className="truncate max-w-48">
+                              Top:{" "}
+                              <span className="font-medium">
+                                {swarmTopDriver}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span>No analysis yet</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
           </tbody>
         </table>
       </div>

@@ -1,9 +1,9 @@
-'use client';
+"use client";
 
-import { useRef, useEffect, useState } from 'react';
-import Link from 'next/link';
-import { useAuth } from '@/lib/auth-context';
-import { useTheme } from '@/lib/theme-context';
+import { useRef, useEffect, useState } from "react";
+import Link from "next/link";
+import { useAuth } from "@/lib/auth-context";
+import { useTheme } from "@/lib/theme-context";
 
 export function AppNav() {
   const { isLoggedIn, oem, logout } = useAuth();
@@ -18,9 +18,9 @@ export function AppNav() {
       }
     }
     if (profileOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener("mousedown", handleClickOutside);
     }
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [profileOpen]);
 
   const handleLogout = () => {
@@ -45,22 +45,30 @@ export function AppNav() {
               aria-haspopup="true"
             >
               <span className="h-2 w-2 rounded-full bg-cyan-blue" aria-hidden />
-              <span className="truncate max-w-[160px]" title={oem?.email}>
-                {oem?.email ?? 'Profile'}
+              <span
+                className="truncate max-w-40"
+                title={oem?.name ?? oem?.email}
+              >
+                {oem?.name ?? "Profile"}
               </span>
               <svg
-                className={`h-4 w-4 transition-transform ${profileOpen ? 'rotate-180' : ''}`}
+                className={`h-4 w-4 transition-transform ${profileOpen ? "rotate-180" : ""}`}
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
                 aria-hidden
               >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M19 9l-7 7-7-7"
+                />
               </svg>
             </button>
             {profileOpen && (
               <div
-                className="absolute right-0 top-full z-10 mt-1 min-w-[200px] rounded-lg border border-light-gray dark:border-gray-600 bg-white dark:bg-gray-800 py-1 shadow-lg"
+                className="absolute right-0 top-full z-10 mt-1 min-w-50 rounded-lg border border-light-gray dark:border-gray-600 bg-white dark:bg-gray-800 py-1 shadow-lg"
                 role="menu"
               >
                 <Link
@@ -86,25 +94,25 @@ export function AppNav() {
                   <div className="flex rounded-lg border border-light-gray dark:border-gray-600 bg-off-white dark:bg-gray-800 p-0.5">
                     <button
                       type="button"
-                      onClick={() => setTheme('light')}
+                      onClick={() => setTheme("light")}
                       className={`rounded-md px-2 py-1 text-xs font-medium transition ${
-                        theme === 'light'
-                          ? 'bg-white dark:bg-gray-700 text-primary-dark dark:text-primary-light shadow'
-                          : 'text-medium-gray dark:text-gray-400 hover:text-dark-gray dark:hover:text-gray-200'
+                        theme === "light"
+                          ? "bg-white dark:bg-gray-700 text-primary-dark dark:text-primary-light shadow"
+                          : "text-medium-gray dark:text-gray-400 hover:text-dark-gray dark:hover:text-gray-200"
                       }`}
-                      aria-pressed={theme === 'light'}
+                      aria-pressed={theme === "light"}
                     >
                       Light
                     </button>
                     <button
                       type="button"
-                      onClick={() => setTheme('dark')}
+                      onClick={() => setTheme("dark")}
                       className={`rounded-md px-2 py-1 text-xs font-medium transition ${
-                        theme === 'dark'
-                          ? 'bg-white dark:bg-gray-700 text-primary-dark dark:text-primary-light shadow'
-                          : 'text-medium-gray dark:text-gray-400 hover:text-dark-gray dark:hover:text-gray-200'
+                        theme === "dark"
+                          ? "bg-white dark:bg-gray-700 text-primary-dark dark:text-primary-light shadow"
+                          : "text-medium-gray dark:text-gray-400 hover:text-dark-gray dark:hover:text-gray-200"
                       }`}
-                      aria-pressed={theme === 'dark'}
+                      aria-pressed={theme === "dark"}
                     >
                       Dark
                     </button>
@@ -114,7 +122,10 @@ export function AppNav() {
                   <p className="text-xs font-medium text-medium-gray dark:text-gray-400 uppercase tracking-wide">
                     Signed in as
                   </p>
-                  <p className="truncate text-sm font-medium text-dark-gray dark:text-gray-200" title={oem?.email}>
+                  <p
+                    className="truncate text-sm font-medium text-dark-gray dark:text-gray-200"
+                    title={oem?.email}
+                  >
                     {oem?.email}
                   </p>
                 </div>

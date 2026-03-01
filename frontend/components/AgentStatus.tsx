@@ -32,7 +32,7 @@ function StreamingTaskText({ text }: { text: string }) {
     <div className="flex items-start gap-2 min-h-5">
       <div className="shrink-0 -mt-0.5">
         {isStreaming ? (
-          <span className="relative flex h-2 w-2 mt-[11px]">
+          <span className="relative flex h-2 w-2 mt-2.75">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-blue opacity-75" />
             <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-blue" />
           </span>
@@ -183,7 +183,7 @@ export function AgentStatus() {
         <h2 className="heading-3 text-dark-gray dark:text-gray-200 shrink-0">
           Agent Status
         </h2>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 mt-0.5">
           <div
             className={`w-2.5 h-2.5 rounded-full ${statusColors[status.status]} ${isActive ? "animate-pulse" : ""}`}
           />
@@ -221,19 +221,21 @@ export function AgentStatus() {
           disabled={triggerMutation.isPending || isActive}
           className="px-5 py-2 bg-primary-dark hover:bg-primary-light disabled:bg-light-gray dark:disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors text-sm shrink-0"
         >
-          {triggerMutation.isPending || isActive ? "Running..." : "Trigger Analysis"}
+          {triggerMutation.isPending || isActive
+            ? "Running..."
+            : "Trigger Analysis"}
         </button>
       </div>
 
       {/* Row 2: Logs — visible until next trigger */}
-      {taskHistory.length > 1 && (
-        <StatusLogFeed history={taskHistory} />
-      )}
+      {taskHistory.length > 1 && <StatusLogFeed history={taskHistory} />}
 
       {/* Row 3: Current agent task / error */}
       {(status.currentTask || status.errorMessage) && (
         <div className="pt-3 border-t border-light-gray dark:border-gray-700 space-y-3">
-          {status.currentTask && <StreamingTaskText text={status.currentTask} />}
+          {status.currentTask && (
+            <StreamingTaskText text={status.currentTask} />
+          )}
 
           {status.errorMessage && (
             <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
