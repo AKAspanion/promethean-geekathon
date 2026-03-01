@@ -316,6 +316,217 @@ function extractNewsData(state: Record<string, unknown> | undefined) {
   };
 }
 
+const NEWS_PAGE_SIZE = 5;
+
+function PaginationBar({
+  page,
+  totalPages,
+  onPrev,
+  onNext,
+}: {
+  page: number;
+  totalPages: number;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between mt-3">
+      <span className="text-[10px] text-medium-gray dark:text-gray-500">
+        Page {page} of {totalPages}
+      </span>
+      <div className="flex gap-1.5">
+        <button
+          type="button"
+          onClick={onPrev}
+          disabled={page <= 1}
+          className="px-2.5 py-1 rounded text-[11px] font-medium border border-light-gray dark:border-gray-600 bg-white dark:bg-gray-800 text-dark-gray dark:text-gray-200 hover:bg-off-white dark:hover:bg-gray-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Prev
+        </button>
+        <button
+          type="button"
+          onClick={onNext}
+          disabled={page >= totalPages}
+          className="px-2.5 py-1 rounded text-[11px] font-medium border border-light-gray dark:border-gray-600 bg-white dark:bg-gray-800 text-dark-gray dark:text-gray-200 hover:bg-off-white dark:hover:bg-gray-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function NewsSourceContent({ data }: { data: ReturnType<typeof extractNewsData> }) {
+  const allRawItems = [
+    ...data.newsapiRaw.map((raw) => ({ type: "newsapi" as const, raw })),
+    ...data.gdeltRaw.map((raw) => ({ type: "gdelt" as const, raw })),
+  ];
+
+  const hasContent =
+    data.newsItems.length > 0 || allRawItems.length > 0;
+
+  const [articlesPage, setArticlesPage] = useState(1);
+  const articlesTotalPages = Math.max(1, Math.ceil(data.newsItems.length / NEWS_PAGE_SIZE));
+  const articlesSlice = data.newsItems.slice(
+    (articlesPage - 1) * NEWS_PAGE_SIZE,
+    articlesPage * NEWS_PAGE_SIZE,
+  );
+
+  const [rawPage, setRawPage] = useState(1);
+  const rawTotalPages = Math.max(1, Math.ceil(allRawItems.length / NEWS_PAGE_SIZE));
+  const rawSlice = allRawItems.slice(
+    (rawPage - 1) * NEWS_PAGE_SIZE,
+    rawPage * NEWS_PAGE_SIZE,
+  );
+
+  if (!hasContent) {
+    return (
+      <p className="text-xs text-medium-gray dark:text-gray-400 mt-3">
+        No news data available.
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-4 space-y-5">
+      {/* News Articles (paginated) */}
+      {data.newsItems.length > 0 ? (
+        <div>
+          <p className="text-xs font-medium text-medium-gray dark:text-gray-400 mb-2">
+            News Articles ({data.newsItems.length})
+          </p>
+          <div className="space-y-2">
+            {articlesSlice.map((item, i) => {
+              const globalIdx = (articlesPage - 1) * NEWS_PAGE_SIZE + i;
+              return (
+                <div
+                  key={globalIdx}
+                  className="border border-light-gray dark:border-gray-700 rounded-lg p-3"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-xs font-medium text-dark-gray dark:text-gray-200 leading-snug">
+                      {String(item.title || `Article ${globalIdx + 1}`)}
+                    </p>
+                    {item.source ? (
+                      <span className="shrink-0 px-1.5 py-0.5 rounded bg-off-white dark:bg-gray-700 text-[10px] text-medium-gray dark:text-gray-400">
+                        {String(item.source)}
+                      </span>
+                    ) : null}
+                  </div>
+                  {item.description ? (
+                    <p className="text-[11px] text-medium-gray dark:text-gray-400 mt-1">
+                      {String(item.description)}
+                    </p>
+                  ) : null}
+                  <div className="flex flex-wrap gap-3 mt-1.5 text-[10px] text-medium-gray dark:text-gray-500">
+                    {item?.publishedAt ? (
+                      <span>
+                        {formatDate(
+                          String(item.publishedAt),
+                          "MMM d, yyyy HH:mm",
+                        )}
+                      </span>
+                    ) : null}
+                    {item.author ? <span>By {String(item.author)}</span> : null}
+                    {item.url ? (
+                      <a
+                        href={String(item.url)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary-dark dark:text-primary-light hover:underline"
+                      >
+                        Read article
+                      </a>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {articlesTotalPages > 1 ? (
+            <PaginationBar
+              page={articlesPage}
+              totalPages={articlesTotalPages}
+              onPrev={() => setArticlesPage((p) => Math.max(1, p - 1))}
+              onNext={() => setArticlesPage((p) => Math.min(articlesTotalPages, p + 1))}
+            />
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Raw API data (paginated) */}
+      {allRawItems.length > 0 ? (
+        <div>
+          <p className="text-xs font-medium text-medium-gray dark:text-gray-400 mb-2">
+            Raw API Data ({allRawItems.length})
+          </p>
+          <div className="space-y-2">
+            {rawSlice.map((entry, i) => {
+              const globalIdx = (rawPage - 1) * NEWS_PAGE_SIZE + i;
+              const entryData = (
+                entry.type === "newsapi"
+                  ? (entry.raw.data ?? entry.raw)
+                  : ((entry.raw as Record<string, unknown>).data ?? entry.raw)
+              ) as Record<string, unknown>;
+              return (
+                <div
+                  key={`${entry.type}-${globalIdx}`}
+                  className="border border-light-gray dark:border-gray-700 rounded-lg p-3"
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase ${
+                        entry.type === "newsapi"
+                          ? "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400"
+                          : "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400"
+                      }`}
+                    >
+                      {entry.type === "newsapi" ? "NewsAPI" : "GDELT"}
+                    </span>
+                    <p className="text-xs font-medium text-dark-gray dark:text-gray-200 line-clamp-1">
+                      {String(entryData.title || `Raw article ${globalIdx + 1}`)}
+                    </p>
+                  </div>
+                  {entryData.description ? (
+                    <p className="text-[10px] text-medium-gray dark:text-gray-400 mt-0.5">
+                      {String(entryData.description)}
+                    </p>
+                  ) : null}
+                  {entry.type === "newsapi" ? (
+                    <div className="flex gap-2 mt-1 text-[10px] text-medium-gray dark:text-gray-500">
+                      {entryData.source ? (
+                        <span>Source: {String(entryData.source)}</span>
+                      ) : null}
+                      {entryData.publishedAt ? (
+                        <span>
+                          {formatDate(
+                            String(entryData.publishedAt),
+                            "MMM d, yyyy HH:mm",
+                          )}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+          {rawTotalPages > 1 ? (
+            <PaginationBar
+              page={rawPage}
+              totalPages={rawTotalPages}
+              onPrev={() => setRawPage((p) => Math.max(1, p - 1))}
+              onNext={() => setRawPage((p) => Math.min(rawTotalPages, p + 1))}
+            />
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+type NewsTab = "supplier" | "global";
+
 function NewsCombinedPanel({
   supplierState,
   globalState,
@@ -323,178 +534,56 @@ function NewsCombinedPanel({
   supplierState?: Record<string, unknown>;
   globalState?: Record<string, unknown>;
 }) {
-  const supplier = extractNewsData(supplierState);
-  const global = extractNewsData(globalState);
+  const supplierData = extractNewsData(supplierState);
+  const globalData = extractNewsData(globalState);
 
-  const allRisks = [...supplier.risks, ...global.risks];
-  const allOpportunities = [...supplier.opportunities, ...global.opportunities];
-  const allNewsItems = [...supplier.newsItems, ...global.newsItems];
-  const allNewsapiRaw = [...supplier.newsapiRaw, ...global.newsapiRaw];
-  const allGdeltRaw = [...supplier.gdeltRaw, ...global.gdeltRaw];
+  const availableTabs: NewsTab[] = [];
+  if (supplierState) availableTabs.push("supplier");
+  if (globalState) availableTabs.push("global");
 
-  const hasContent =
-    allRisks.length > 0 ||
-    allOpportunities.length > 0 ||
-    allNewsItems.length > 0 ||
-    allNewsapiRaw.length > 0;
+  const [activeTab, setActiveTab] = useState<NewsTab>(
+    availableTabs[0] ?? "supplier",
+  );
+
+  if (availableTabs.length === 0) return null;
 
   return (
     <Card>
-      <div className="flex items-center gap-3 mb-4">
+      <div className="flex items-center gap-3 mb-2">
         <SectionHeading>News Agent State</SectionHeading>
-        <div className="flex flex-wrap gap-2 text-[10px] text-medium-gray dark:text-gray-500">
-          {supplierState ? (
-            <span className="px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400">
-              Supplier
-            </span>
-          ) : null}
-          {globalState ? (
-            <span className="px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
-              Global
-            </span>
-          ) : null}
-          {allNewsapiRaw.length > 0 ? (
-            <span className="px-1.5 py-0.5 rounded bg-off-white dark:bg-gray-700">
-              NewsAPI: {allNewsapiRaw.length}
-            </span>
-          ) : null}
-          {allGdeltRaw.length > 0 ? (
-            <span className="px-1.5 py-0.5 rounded bg-off-white dark:bg-gray-700">
-              GDELT: {allGdeltRaw.length}
-            </span>
-          ) : null}
-        </div>
       </div>
 
-      {!hasContent ? (
-        <p className="text-xs text-medium-gray dark:text-gray-400">
-          No news data available.
-        </p>
-      ) : null}
+      {/* Inner tabs for Supplier / Global */}
+      <div className="flex shrink-0 rounded-lg border border-light-gray dark:border-gray-600 overflow-hidden text-[12px] font-medium w-fit">
+        {availableTabs.map((tab, i) => {
+          const tabData = tab === "supplier" ? supplierData : globalData;
+          const articleCount = tabData.newsItems.length + tabData.newsapiRaw.length + tabData.gdeltRaw.length;
+          return (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => setActiveTab(tab)}
+              className={`px-4 py-2 transition ${i > 0 ? "border-l border-light-gray dark:border-gray-600" : ""} ${
+                activeTab === tab
+                  ? "bg-primary-dark text-white dark:bg-primary-light dark:text-gray-900"
+                  : "bg-white dark:bg-gray-800 text-dark-gray dark:text-gray-200 hover:bg-off-white dark:hover:bg-gray-700"
+              }`}
+            >
+              {tab === "supplier" ? "Supplier" : "Global"}
+              {articleCount > 0 ? (
+                <span className="ml-1.5 opacity-70">({articleCount})</span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
 
-      {/* Raw News Articles */}
-      {allNewsItems.length > 0 ? (
-        <div className="mb-5">
-          <p className="text-xs font-medium text-medium-gray dark:text-gray-400 mb-2">
-            News Articles ({allNewsItems.length})
-          </p>
-          <div className="space-y-2">
-            {allNewsItems.map((item, i) => (
-              <div
-                key={i}
-                className="border border-light-gray dark:border-gray-700 rounded-lg p-3"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <p className="text-xs font-medium text-dark-gray dark:text-gray-200 leading-snug">
-                    {String(item.title || `Article ${i + 1}`)}
-                  </p>
-                  {item.source ? (
-                    <span className="shrink-0 px-1.5 py-0.5 rounded bg-off-white dark:bg-gray-700 text-[10px] text-medium-gray dark:text-gray-400">
-                      {String(item.source)}
-                    </span>
-                  ) : null}
-                </div>
-                {item.description ? (
-                  <p className="text-[11px] text-medium-gray dark:text-gray-400 mt-1">
-                    {String(item.description)}
-                  </p>
-                ) : null}
-                <div className="flex flex-wrap gap-3 mt-1.5 text-[10px] text-medium-gray dark:text-gray-500">
-                  {item?.publishedAt ? (
-                    <span>
-                      {formatDate(
-                        String(item.publishedAt),
-                        "MMM d, yyyy HH:mm",
-                      )}
-                    </span>
-                  ) : null}
-                  {item.author ? <span>By {String(item.author)}</span> : null}
-                  {item.url ? (
-                    <a
-                      href={String(item.url)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary-dark dark:text-primary-light hover:underline"
-                    >
-                      Read article
-                    </a>
-                  ) : null}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+      {/* Tab content */}
+      {activeTab === "supplier" ? (
+        <NewsSourceContent key="supplier" data={supplierData} />
       ) : null}
-
-      {/* Raw API data counts */}
-      {allNewsapiRaw.length > 0 || allGdeltRaw.length > 0 ? (
-        <div>
-          <p className="text-xs font-medium text-medium-gray dark:text-gray-400 mb-2">
-            Raw API Data
-          </p>
-          <div className="space-y-2">
-            {allNewsapiRaw.map((raw, i) => {
-              const data = (raw.data ?? raw) as Record<string, unknown>;
-              return (
-                <div
-                  key={`newsapi-${i}`}
-                  className="border border-light-gray dark:border-gray-700 rounded-lg p-3"
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 text-[9px] font-semibold uppercase">
-                      NewsAPI
-                    </span>
-                    <p className="text-xs font-medium text-dark-gray dark:text-gray-200 line-clamp-1">
-                      {String(data.title || `Raw article ${i + 1}`)}
-                    </p>
-                  </div>
-                  {data.description ? (
-                    <p className="text-[10px] text-medium-gray dark:text-gray-400 mt-0.5">
-                      {String(data.description)}
-                    </p>
-                  ) : null}
-                  <div className="flex gap-2 mt-1 text-[10px] text-medium-gray dark:text-gray-500">
-                    {data.source ? (
-                      <span>Source: {String(data.source)}</span>
-                    ) : null}
-                    {data.publishedAt ? (
-                      <span>
-                        {formatDate(
-                          String(data.publishedAt),
-                          "MMM d, yyyy HH:mm",
-                        )}
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-              );
-            })}
-            {allGdeltRaw.map((raw, i) => {
-              const data = ((raw as Record<string, unknown>).data ??
-                raw) as Record<string, unknown>;
-              return (
-                <div
-                  key={`gdelt-${i}`}
-                  className="border border-light-gray dark:border-gray-700 rounded-lg p-3"
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 text-[9px] font-semibold uppercase">
-                      GDELT
-                    </span>
-                    <p className="text-xs font-medium text-dark-gray dark:text-gray-200 line-clamp-1">
-                      {String(data.title || `GDELT article ${i + 1}`)}
-                    </p>
-                  </div>
-                  {data.description ? (
-                    <p className="text-[10px] text-medium-gray dark:text-gray-400 mt-0.5">
-                      {String(data.description)}
-                    </p>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        </div>
+      {activeTab === "global" ? (
+        <NewsSourceContent key="global" data={globalData} />
       ) : null}
     </Card>
   );
