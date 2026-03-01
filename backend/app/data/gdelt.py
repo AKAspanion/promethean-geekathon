@@ -7,6 +7,9 @@ import httpx
 logger = logging.getLogger(__name__)
 BASE_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 
+# Set to False to disable GDELT fetching (e.g. during rate-limit issues)
+GDELT_ENABLED = False
+
 # Geopolitical keywords tuned for supply chain risk types
 _DEFAULT_KEYWORDS = [
     "supply chain disruption",
@@ -36,6 +39,10 @@ class GDELTDataSource(BaseDataSource):
         return True
 
     async def fetch_data(self, params: dict | None = None) -> list[DataSourceResult]:
+        if not GDELT_ENABLED:
+            logger.info("GDELT: disabled via GDELT_ENABLED flag")
+            return []
+
         keywords = (params or {}).get("keywords") or _DEFAULT_KEYWORDS
         results: list[DataSourceResult] = []
 
