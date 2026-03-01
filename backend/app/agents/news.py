@@ -1,7 +1,9 @@
 import json
 import logging
+import re
 import time
 import uuid as _uuid
+from datetime import datetime, timezone
 from typing import TypedDict, Literal
 from uuid import UUID
 
@@ -80,6 +82,8 @@ class NewsAgentState(TypedDict, total=False):
     # Per-source raw fetch results (populated by parallel fetch nodes)
     newsapi_raw: list[dict]
     gdelt_raw: list[dict]
+    headlines_raw: list[dict]  # broad top-headlines filtered by supplier pool
+    prefetched_broad_headlines: list[dict] | None  # optional; when set, skip fetch_broad_headlines API
     # Merged + normalised
     news_items: list[NewsItem]
     news_risks: list[dict]
@@ -115,13 +119,198 @@ def _parse_commodities(raw: str | None) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Commodity → upstream raw-material mapping
+# ---------------------------------------------------------------------------
+# Maps finished/processed commodities to their upstream dependencies so that
+# geopolitical events affecting raw materials (e.g. oil/petroleum) are
+# surfaced for suppliers that depend on derived products (e.g. plastics).
+
+_COMMODITY_UPSTREAM_MAP: dict[str, list[str]] = {
+    # Plastics & polymers ← petroleum / oil / natural gas
+    "plastic": ["oil", "petroleum", "crude oil", "petrochemical", "resin"],
+    "plastics": ["oil", "petroleum", "crude oil", "petrochemical", "resin"],
+    "plastic housing": ["oil", "petroleum", "crude oil", "petrochemical", "resin"],
+    "plastic housings": ["oil", "petroleum", "crude oil", "petrochemical", "resin"],
+    "polymer": ["oil", "petroleum", "crude oil", "petrochemical", "resin"],
+    "polycarbonate": ["oil", "petroleum", "petrochemical"],
+    "nylon": ["oil", "petroleum", "petrochemical"],
+    "polyethylene": ["oil", "petroleum", "petrochemical", "ethylene"],
+    "polypropylene": ["oil", "petroleum", "petrochemical"],
+    "pvc": ["oil", "petroleum", "petrochemical", "chlorine"],
+    "abs": ["oil", "petroleum", "petrochemical"],
+    "rubber": ["oil", "petroleum", "natural rubber", "latex"],
+    "synthetic rubber": ["oil", "petroleum", "petrochemical"],
+    # Connectors & electronics ← copper, rare earths, semiconductors
+    "connector": ["copper", "rare earth", "semiconductor"],
+    "connectors": ["copper", "rare earth", "semiconductor"],
+    "circuit board": ["copper", "rare earth", "semiconductor", "silicon"],
+    "pcb": ["copper", "rare earth", "semiconductor", "silicon"],
+    "semiconductor": ["silicon", "rare earth", "neon gas"],
+    "semiconductors": ["silicon", "rare earth", "neon gas"],
+    "wiring harness": ["copper", "rubber", "petroleum"],
+    "cable": ["copper", "aluminum", "petroleum"],
+    # Metals
+    "steel": ["iron ore", "coal", "coking coal"],
+    "stainless steel": ["iron ore", "nickel", "chromium"],
+    "aluminum": ["bauxite", "alumina"],
+    "aluminium": ["bauxite", "alumina"],
+    # Battery & EV
+    "battery": ["lithium", "cobalt", "nickel", "rare earth"],
+    "batteries": ["lithium", "cobalt", "nickel", "rare earth"],
+    "ev battery": ["lithium", "cobalt", "nickel", "manganese"],
+    # Textiles
+    "textile": ["cotton", "polyester", "petroleum"],
+    "fabric": ["cotton", "polyester", "petroleum"],
+}
+
+
+def _get_upstream_materials(commodities_str: str | None) -> list[str]:
+    """Return upstream raw materials for the given commodities string.
+
+    Matches each parsed commodity against _COMMODITY_UPSTREAM_MAP using
+    case-insensitive lookup.  Returns a deduplicated list.
+    """
+    if not commodities_str:
+        return []
+    parsed = _parse_commodities(commodities_str)
+    seen: set[str] = set()
+    result: list[str] = []
+    for commodity in parsed:
+        key = commodity.lower().strip()
+        upstream = _COMMODITY_UPSTREAM_MAP.get(key, [])
+        for mat in upstream:
+            if mat not in seen:
+                seen.add(mat)
+                result.append(mat)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Country-code → common-name aliases for semantic headline matching
+# ---------------------------------------------------------------------------
+
+_COUNTRY_ALIASES: dict[str, list[str]] = {
+    "us": ["united states", "america", "usa", "u.s.", "us"],  # "us" for "US and Israel" etc.
+    "uk": ["united kingdom", "britain", "england", "u.k."],
+    "gb": ["united kingdom", "britain", "england", "u.k."],
+    "cn": ["china", "chinese", "beijing", "shanghai"],
+    "tw": ["taiwan", "taiwanese", "taipei"],
+    "jp": ["japan", "japanese", "tokyo"],
+    "kr": ["south korea", "korean", "seoul"],
+    "de": ["germany", "german", "berlin", "munich"],
+    "in": ["india", "indian", "delhi", "mumbai", "chennai"],
+    "mx": ["mexico", "mexican"],
+    "br": ["brazil", "brazilian"],
+    "ru": ["russia", "russian", "moscow"],
+    "ua": ["ukraine", "ukrainian", "kyiv"],
+    "il": ["israel", "israeli", "tel aviv"],
+    "sa": ["saudi arabia", "saudi"],
+    "ae": ["uae", "emirates", "dubai", "abu dhabi"],
+    "sg": ["singapore"],
+    "my": ["malaysia", "malaysian", "kuala lumpur"],
+    "th": ["thailand", "thai", "bangkok"],
+    "vn": ["vietnam", "vietnamese", "hanoi", "ho chi minh"],
+    "id": ["indonesia", "indonesian", "jakarta"],
+    "ph": ["philippines", "filipino", "manila"],
+    "au": ["australia", "australian", "sydney", "melbourne"],
+    "ca": ["canada", "canadian", "toronto", "vancouver"],
+    "fr": ["france", "french", "paris"],
+    "it": ["italy", "italian", "milan"],
+    "es": ["spain", "spanish", "madrid", "barcelona"],
+    "pl": ["poland", "polish", "warsaw"],
+    "tr": ["turkey", "turkish", "istanbul", "ankara"],
+    "za": ["south africa"],
+    "eg": ["egypt", "egyptian", "cairo", "suez"],
+    "cl": ["chile", "chilean", "santiago"],
+    "pe": ["peru", "peruvian", "lima"],
+    "co": ["colombia", "colombian"],
+    "ar": ["argentina", "argentine", "buenos aires"],
+    "ng": ["nigeria", "nigerian", "lagos"],
+    "ke": ["kenya", "kenyan", "nairobi"],
+    "bd": ["bangladesh", "bangladeshi", "dhaka"],
+    "pk": ["pakistan", "pakistani", "karachi"],
+    "mm": ["myanmar", "burmese"],
+    "ye": ["yemen", "yemeni"],
+    "ir": ["iran", "iranian", "tehran"],
+    "iq": ["iraq", "iraqi", "baghdad"],
+    "sy": ["syria", "syrian"],
+    "lb": ["lebanon", "lebanese", "beirut"],
+}
+
+
+def _build_supplier_keyword_pool(
+    oem_data: EntityData | None, supplier_data: EntityData | None,
+) -> list[str]:
+    """Build a flat list of lowercase keywords from OEM/supplier data.
+
+    Used for semantic matching of broad top-headlines against the entity pool.
+    Returns keywords with len >= 3 to avoid false positives.
+    """
+    pool: set[str] = set()
+    for entity in (oem_data, supplier_data):
+        if not entity:
+            continue
+        name = (entity.get("name") or "").strip()
+        if name and len(name) >= 3:
+            pool.add(name.lower())
+        for field in ("city", "country", "region", "location"):
+            val = (entity.get(field) or "").strip()
+            if val and len(val) >= 3:
+                pool.add(val.lower())
+        code = (entity.get("countryCode") or "").strip().lower()
+        if code:
+            for alias in _COUNTRY_ALIASES.get(code, []):
+                pool.add(alias)
+            # Also expand country name itself
+            country_name = (entity.get("country") or "").strip().lower()
+            if country_name and len(country_name) >= 3:
+                pool.add(country_name)
+        for commodity in _parse_commodities(entity.get("commodities")):
+            if len(commodity) >= 3:
+                pool.add(commodity.lower())
+        # Add upstream raw materials so headlines about feedstock disruptions
+        # (e.g. "oil markets", "petroleum prices") match suppliers that depend
+        # on derived products (e.g. plastic housings).
+        for mat in _get_upstream_materials(entity.get("commodities")):
+            if len(mat) >= 3:
+                pool.add(mat.lower())
+    return list(pool)
+
+
+def _headline_matches_pool(article: dict, keyword_pool: list[str]) -> bool:
+    """Check if headline / description text matches any keyword from the supplier pool.
+
+    Short country codes (e.g. 'us', 'uk') are matched with word boundaries so
+    'US and Israel attack Iran' matches a US-based supplier (word 'us') and
+    avoids false positives like 'us' in 'focus' or 'manufacturing'.
+    """
+    text = " ".join([
+        article.get("title") or "",
+        article.get("description") or "",
+    ]).lower()
+    if not text.strip():
+        return False
+    for kw in keyword_pool:
+        if len(kw) <= 2:
+            # Word-boundary match so "us" matches "US and Israel" not "focus"
+            if re.search(r"\b" + re.escape(kw) + r"\b", text):
+                return True
+        elif kw in text:
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Keyword helpers — driven by oem_data and supplier_data, NOT scope
 # ---------------------------------------------------------------------------
 
 def _newsapi_keywords(
     oem_data: EntityData | None, supplier_data: EntityData | None
 ) -> list[str]:
-    base = ["supply chain", "manufacturing", "logistics", "shipping"]
+    base = [
+        "supply chain", "manufacturing", "logistics", "shipping",
+        "war", "armed conflict", "military conflict", "supply chain war",
+    ]
     if oem_data:
         oem_name = oem_data.get("name")
         if oem_name:
@@ -134,6 +323,8 @@ def _newsapi_keywords(
         oem_country = oem_data.get("countryCode") or oem_data.get("country")
         if oem_country:
             base.append(f"supply chain {oem_country}")
+            base.append(f"attack {oem_country}")
+            base.append(f"conflict {oem_country}")
     if supplier_data:
         supplier_name = supplier_data.get("name")
         if supplier_name:
@@ -146,13 +337,30 @@ def _newsapi_keywords(
         sup_country = supplier_data.get("countryCode") or supplier_data.get("country")
         if sup_country:
             base.append(f"supply chain {sup_country}")
+            base.append(f"attack {sup_country}")
+            base.append(f"conflict {sup_country}")
+
+    # Add upstream raw-material keywords so that events affecting feedstocks
+    # (e.g. oil/petroleum for plastics) are captured even when articles don't
+    # mention the finished commodity directly.
+    for entity in (oem_data, supplier_data):
+        if not entity:
+            continue
+        for mat in _get_upstream_materials(entity.get("commodities"))[:4]:
+            base.append(f"{mat} supply chain")
+            base.append(f"{mat} shortage")
+
     return base
 
 
 def _gdelt_keywords(
     oem_data: EntityData | None, supplier_data: EntityData | None
 ) -> list[str]:
+    # Conflict/war keywords come first so they are prioritised within GDELT's keyword cap
     base = [
+        "attack",
+        "armed conflict",
+        "military conflict",
         "supply chain disruption",
         "trade sanctions",
         "port strike",
@@ -167,6 +375,8 @@ def _gdelt_keywords(
             base.append(f"{commodity} shortage")
         oem_country = oem_data.get("countryCode") or oem_data.get("country")
         if oem_country:
+            base.append(f"attack {oem_country}")
+            base.append(f"conflict {oem_country}")
             base.append(f"sanctions {oem_country}")
     if supplier_data:
         supplier_name = supplier_data.get("name")
@@ -176,7 +386,18 @@ def _gdelt_keywords(
             base.append(f"{commodity} shortage")
         sup_country = supplier_data.get("countryCode") or supplier_data.get("country")
         if sup_country:
+            base.append(f"attack {sup_country}")
+            base.append(f"conflict {sup_country}")
             base.append(f"sanctions {sup_country}")
+
+    # Upstream raw-material disruption keywords
+    for entity in (oem_data, supplier_data):
+        if not entity:
+            continue
+        for mat in _get_upstream_materials(entity.get("commodities"))[:4]:
+            base.append(f"{mat} shortage")
+            base.append(f"{mat} disruption")
+
     return base
 
 
@@ -195,11 +416,20 @@ def _entity_names(state: NewsAgentState) -> tuple[str | None, str | None]:
 # ---------------------------------------------------------------------------
 
 async def _fetch_newsapi_node(state: NewsAgentState) -> NewsAgentState:
-    """Fetch articles from NewsAPI.org."""
+    """Fetch articles from NewsAPI.org. Skips API call when news_data already has news (avoids 429)."""
     context = state.get("context", "supplier")
     oem_data = state.get("oem_data")
     supplier_data = state.get("supplier_data")
     oem_name, supplier_name = _entity_names(state)
+    # When orchestrator already fetched news (e.g. manager.fetch_by_types), skip to avoid 429
+    pre = (state.get("news_data") or {}).get("news") or []
+    if pre:
+        logger.info("[NewsAgent:%s] Using pre-fetched news (%d items), skipping NewsAPI call", context, len(pre))
+        await _broadcast_progress(
+            "fetch_newsapi_skip", "Using pre-fetched news", context,
+            {"count": len(pre)}, oem_name=oem_name, supplier_name=supplier_name,
+        )
+        return {"newsapi_raw": pre}
     keywords = _newsapi_keywords(oem_data, supplier_data)
     logger.info("[NewsAgent:%s] Fetching from NewsAPI with %d keywords", context, len(keywords))
     await _broadcast_progress("fetch_newsapi", "Fetching articles from NewsAPI", context, oem_name=oem_name, supplier_name=supplier_name)
@@ -247,6 +477,79 @@ async def _fetch_gdelt_node(state: NewsAgentState) -> NewsAgentState:
 
 
 # ---------------------------------------------------------------------------
+# Broad headline scan — fetch top headlines and semantic-match against
+# the supplier/OEM keyword pool to catch events that keyword search misses
+# ---------------------------------------------------------------------------
+
+async def _fetch_top_headlines_node(state: NewsAgentState) -> NewsAgentState:
+    """Fetch broad top headlines and filter by semantic match against the supplier pool.
+
+    This catches breaking events that keyword-based NewsAPI queries would miss.
+    For example, a headline "Earthquake hits Taiwan" would be picked up because
+    "Taiwan" or "taiwanese" is in the supplier keyword pool even though the
+    query "TSMC supply chain" was not used.
+    """
+    context = state.get("context", "supplier")
+    oem_data = state.get("oem_data")
+    supplier_data = state.get("supplier_data")
+    oem_name, supplier_name = _entity_names(state)
+
+    keyword_pool = _build_supplier_keyword_pool(oem_data, supplier_data)
+    if not keyword_pool:
+        logger.info("[NewsAgent:%s] No supplier keyword pool — skipping broad headline scan", context)
+        return {"headlines_raw": []}
+
+    await _broadcast_progress(
+        "fetch_headlines",
+        "Scanning top headlines for supplier-relevant events",
+        context,
+        {"pool_size": len(keyword_pool), "pool_sample": keyword_pool[:10]},
+        oem_name=oem_name, supplier_name=supplier_name,
+    )
+
+    prefetched = state.get("prefetched_broad_headlines")
+    try:
+        if prefetched is not None:
+            # Use headlines fetched once per OEM to avoid 429 (no API call here)
+            all_headlines = prefetched
+            logger.info("[NewsAgent:%s] Using %d pre-fetched broad headlines", context, len(all_headlines))
+        else:
+            source = NewsDataSource()
+            await source.initialize({})
+            all_headlines = await source.fetch_broad_headlines()
+
+        matched: list[dict] = []
+        for result in all_headlines:
+            raw = result.to_dict() if hasattr(result, "to_dict") else result
+            if not isinstance(raw, dict):
+                continue
+            article = raw.get("data", raw) if isinstance(raw, dict) else raw
+            if isinstance(article, dict) and _headline_matches_pool(article, keyword_pool):
+                matched.append(raw)
+
+        logger.info(
+            "[NewsAgent:%s] Broad headlines: %d total, %d matched supplier pool (pool=%d keywords)",
+            context, len(all_headlines), len(matched), len(keyword_pool),
+        )
+        await _broadcast_progress(
+            "fetch_headlines_done",
+            f"Found {len(matched)} supplier-relevant headlines from {len(all_headlines)} scanned",
+            context,
+            {"total_scanned": len(all_headlines), "matched": len(matched)},
+            oem_name=oem_name, supplier_name=supplier_name,
+        )
+    except Exception as exc:
+        logger.exception("[NewsAgent:%s] Broad headline scan error: %s", context, exc)
+        await _broadcast_progress(
+            "fetch_headlines_error", f"Headline scan error: {exc}",
+            context, oem_name=oem_name, supplier_name=supplier_name,
+        )
+        matched = []
+
+    return {"headlines_raw": matched}
+
+
+# ---------------------------------------------------------------------------
 # Merge node — fan-in after parallel fetches
 # ---------------------------------------------------------------------------
 
@@ -267,6 +570,8 @@ async def _merge_news_node(state: NewsAgentState) -> NewsAgentState:
     for item in state.get("newsapi_raw") or []:
         combined.append(item)
     for item in state.get("gdelt_raw") or []:
+        combined.append(item)
+    for item in state.get("headlines_raw") or []:
         combined.append(item)
 
     # Deduplicate by normalised title
@@ -353,10 +658,13 @@ def _build_entity_context(
         ]
         oem_loc = ", ".join(oem_loc_parts) if oem_loc_parts else "Unknown"
         oem_commodities = oem_data.get("commodities") or "N/A"
+        oem_upstream = _get_upstream_materials(oem_data.get("commodities"))
+        oem_upstream_str = ", ".join(oem_upstream) if oem_upstream else "N/A"
         parts.append(
             f"OEM: {oem_name}\n"
             f"  Location: {oem_loc}\n"
-            f"  Commodities: {oem_commodities}"
+            f"  Commodities: {oem_commodities}\n"
+            f"  Upstream raw-material dependencies: {oem_upstream_str}"
         )
     if supplier_data:
         sup_name = supplier_data.get("name") or "Unknown"
@@ -371,10 +679,13 @@ def _build_entity_context(
         ]
         sup_loc = ", ".join(sup_loc_parts) if sup_loc_parts else "Unknown"
         sup_commodities = supplier_data.get("commodities") or "N/A"
+        sup_upstream = _get_upstream_materials(supplier_data.get("commodities"))
+        upstream_str = ", ".join(sup_upstream) if sup_upstream else "N/A"
         parts.append(
             f"Supplier: {sup_name}\n"
             f"  Location: {sup_loc}\n"
-            f"  Commodities: {sup_commodities}"
+            f"  Commodities: {sup_commodities}\n"
+            f"  Upstream raw-material dependencies: {upstream_str}"
         )
     return "\n".join(parts) if parts else "No entity context available."
 
@@ -393,29 +704,104 @@ def _build_supplier_prompt(
                 "system",
                 (
                     "You are a News Agent for a manufacturing supply "
-                    "chain. You receive news items about suppliers, "
-                    "OEMs, and regions. Extract structured supply "
-                    "chain risk signals using the following "
-                    "risk types: factory_shutdown, labor_strike, "
+                    "chain. You receive real-time and recent news items "
+                    "(sourced from NewsAPI /everything, /top-headlines, "
+                    "and broad headline scanning) about suppliers, OEMs, "
+                    "and regions. Extract structured supply chain risk "
+                    "signals using the following risk types: "
+                    "factory_shutdown, labor_strike, "
                     "bankruptcy_risk, sanction_risk, "
                     "port_congestion, natural_disaster, "
-                    "geopolitical_tension, regulatory_change, "
+                    "geopolitical_tension, war, armed_conflict, "
+                    "regulatory_change, "
                     "infrastructure_failure, commodity_shortage, "
                     "cyber_incident.\n\n"
-                    "IMPORTANT SCORING RULES:\n"
-                    "- Only report risks that DIRECTLY affect this specific supplier's "
-                    "operations, facilities, workforce, or supply routes.\n"
-                    "- Do NOT inflate severity for indirect, speculative, or regional risks "
-                    "that have no confirmed direct link to the supplier.\n"
-                    "- 'critical' = confirmed shutdown, strike, sanctions, or imminent "
-                    "bankruptcy directly involving this supplier.\n"
-                    "- 'high' = confirmed disruption to the supplier's specific region, "
-                    "port, or supply route with clear operational impact.\n"
-                    "- 'medium' = potential disruption in the supplier's broader region "
-                    "that could plausibly affect operations.\n"
-                    "- 'low' = distant or tangential risks with no direct confirmed impact.\n"
-                    "- If news is vague or only loosely related, either skip it or rate "
-                    "it 'low'. Do NOT default to 'medium' or 'high' for uncertain risks.\n\n"
+                    "RECENCY RULES:\n"
+                    "- Each news item includes a 'publishedAt' timestamp. "
+                    "Articles published within the last 24 hours are "
+                    "breaking news — do NOT downgrade their severity. "
+                    "Recent single-source reports of a war, shutdown, or "
+                    "major disruption are sufficient to flag a risk.\n"
+                    "- Weight recent articles more heavily than older ones "
+                    "when determining severity.\n\n"
+                    "GEOGRAPHIC MAPPING RULES:\n"
+                    "- Cross-reference every news article with the OEM "
+                    "and supplier locations listed in the Entity Context. "
+                    "If an event occurs in the same country, region, or "
+                    "city where the supplier or OEM operates, escalate "
+                    "severity by one level (e.g. medium → high).\n"
+                    "- Always populate 'affectedRegion' with the specific "
+                    "country or region mentioned in the article.\n"
+                    "- If the event affects a key commodity that the OEM "
+                    "or supplier depends on (see commodities in Entity "
+                    "Context), flag it even if the event is in a "
+                    "different region — commodity supply chains are "
+                    "global.\n"
+                    "- For events like war, natural disasters, or port "
+                    "closures: also consider indirect impact on trade "
+                    "routes and neighbouring regions that supply "
+                    "the OEM/supplier.\n\n"
+                    "UPSTREAM COMMODITY DEPENDENCY RULES:\n"
+                    "- The Entity Context lists 'Upstream raw-material "
+                    "dependencies' for each entity. These are the "
+                    "feedstocks and raw materials required to produce "
+                    "the entity's commodities (e.g. plastic housings "
+                    "depend on oil/petroleum/resin).\n"
+                    "- If a news event disrupts an upstream raw material "
+                    "(e.g. war in an oil-producing country, petroleum "
+                    "price spikes, sanctions on a mineral exporter), "
+                    "flag it as a risk for the supplier with risk_type "
+                    "'commodity_shortage' even if the article never "
+                    "mentions the supplier's finished commodity.\n"
+                    "- War or conflict in major oil-producing regions "
+                    "(Iran, Iraq, Saudi Arabia, Russia, Venezuela) "
+                    "should be flagged as 'high' severity for ANY "
+                    "supplier whose commodities depend on petroleum-"
+                    "derived materials (plastics, polymers, rubber, "
+                    "synthetic textiles). Example: ongoing US–Iran–Israel "
+                    "attacks or conflict in the Middle East must be flagged "
+                    "as commodity_shortage (high) for suppliers with "
+                    "plastic/polymer/connector commodities because Iran "
+                    "and the region are major oil producers.\n\n"
+                    "CRITICAL SEVERITY RULES FOR WAR AND ARMED CONFLICT:\n"
+                    "- If a news item reports active war or armed conflict "
+                    "in a region: set severity to 'critical' and "
+                    "risk_type to 'war' for the region where the conflict "
+                    "is directly occurring. Always populate affectedRegion "
+                    "with the specific country or region name.\n"
+                    "- BELLIGERENT COUNTRIES: If the article names a "
+                    "country as conducting or participating in military "
+                    "operations (e.g. 'US and Israel attack Iran'), that "
+                    "country is a belligerent. For a supplier whose "
+                    "location/country is that belligerent, create a risk "
+                    "with severity 'high' and risk_type 'war' or "
+                    "'armed_conflict', with affectedRegion set to that "
+                    "country. Example: a US-based supplier (e.g. Detroit) "
+                    "in a headline 'US and Israel attack Iran' should get "
+                    "a high-severity war/armed_conflict risk for the US "
+                    "as affectedRegion, in addition to critical for Iran.\n"
+                    "- For regions that could be indirectly affected by "
+                    "the conflict (e.g. neighbouring countries, key trade "
+                    "partners, or regions with significant supply chain "
+                    "exposure to the conflict zone): create a separate "
+                    "risk entry with severity 'high' and risk_type "
+                    "'geopolitical_tension', and populate affectedRegion "
+                    "with that region.\n"
+                    "- Never downgrade a war/armed conflict event to "
+                    "'medium' or 'low' severity.\n\n"
+                    "IMPORTANT SCORING: Do NOT inflate severity for indirect or "
+                    "speculative risks with no confirmed direct link to the supplier. "
+                    "'critical' = confirmed shutdown, strike, sanctions, or imminent "
+                    "bankruptcy directly involving this supplier. If news is vague "
+                    "or only loosely related, either skip it or rate it 'low'.\n\n"
+                    "Also extract positive opportunities (new trade deals, "
+                    "capacity expansions, cost reductions, partnerships). "
+                    "Not every article is a risk — look for positive "
+                    "signals too.\n\n"
+                    "IMPORTANT: News articles may be in any language. "
+                    "Always return all extracted fields in English.\n\n"
+                    "Only set estimatedCost when the article provides a "
+                    "concrete figure. Do not guess or fabricate costs.\n\n"
                     "Return ONLY valid JSON."
                 ),
             ),
@@ -434,7 +820,7 @@ def _build_supplier_prompt(
                     '      "description": str,\n'
                     '      "severity": "low" | "medium" | '
                     '"high" | "critical",\n'
-                    '      "affectedRegion": str | null,\n'
+                    '      "affectedRegion": str (REQUIRED — the country or region),\n'
                     '      "affectedSupplier": str | null,\n'
                     '      "estimatedImpact": str | null,\n'
                     '      "estimatedCost": number | null,\n'
@@ -472,25 +858,79 @@ def _build_global_prompt(
             (
                 "system",
                 (
-                    "You are a global supply chain News Agent. You "
-                    "receive news about macro events (geopolitics, "
-                    "trade, climate, logistics). Extract only "
-                    "material global supply chain risks that DIRECTLY "
-                    "and CONCRETELY affect the given OEM and supplier.\n\n"
-                    "IMPORTANT: Be conservative with severity ratings. "
-                    "Global macro events should only be rated 'high' or 'critical' "
-                    "if they have a confirmed, direct impact on this specific "
-                    "supplier's operations or supply chain. Distant geopolitical "
-                    "tensions or broad economic trends with no direct link should "
-                    "be rated 'low'. If the connection to this supplier is speculative, "
-                    "either omit the risk or rate it 'low'."
+                    "receive real-time and recent news (sourced from "
+                    "NewsAPI /everything, /top-headlines, and broad "
+                    "headline scanning) about macro events (geopolitics, "
+                    "trade, climate, logistics, war). Extract global "
+                    "supply chain risks AND opportunities that could "
+                    "affect the given OEM and supplier.\n\n"
+                    "RECENCY RULES:\n"
+                    "- Each news item includes a 'publishedAt' timestamp. "
+                    "Treat articles published within the last 24 hours as "
+                    "breaking events — do NOT downgrade their severity. "
+                    "A single recent report of war, a major port closure, "
+                    "or sanctions is sufficient to raise a risk.\n"
+                    "- Weight recent articles more heavily when assigning "
+                    "severity.\n\n"
+                    "GEOGRAPHIC MAPPING RULES:\n"
+                    "- Cross-reference every article against the OEM and "
+                    "supplier locations in the Entity Context below.\n"
+                    "- If a global event occurs in the same country or "
+                    "region as the OEM or supplier, escalate severity.\n"
+                    "- Consider trade-route and commodity dependencies: "
+                    "Red Sea disruptions affect Asia-Europe routes, "
+                    "Taiwan events affect semiconductor supply, etc.\n"
+                    "- Always populate 'affectedRegion' with the specific "
+                    "country or region from the article.\n\n"
+                    "UPSTREAM COMMODITY DEPENDENCY RULES:\n"
+                    "- The Entity Context lists 'Upstream raw-material "
+                    "dependencies'. If a global event disrupts an "
+                    "upstream raw material (e.g. war in an oil-producing "
+                    "country, petroleum price spikes), flag it as a risk "
+                    "with risk_type 'commodity_shortage' even if the "
+                    "article doesn't mention the finished commodity.\n"
+                    "- War or conflict in major oil-producing regions "
+                    "(Iran, Iraq, Saudi Arabia, Russia, Venezuela) "
+                    "should be flagged for suppliers whose commodities "
+                    "depend on petroleum-derived materials. Example: "
+                    "US–Iran–Israel attacks or Middle East conflict → "
+                    "commodity_shortage (high) for plastic/polymer "
+                    "suppliers.\n\n"
+                    "CRITICAL SEVERITY RULES FOR WAR AND ARMED CONFLICT:\n"
+                    "- If a news item reports active war or armed conflict "
+                    "in a region: set severity to 'critical' and "
+                    "risk_type to 'war' for the region where the conflict "
+                    "is directly occurring. Always populate affectedRegion "
+                    "with the specific country or region name.\n"
+                    "- BELLIGERENT COUNTRIES: If the article names a "
+                    "country as conducting military operations (e.g. 'US "
+                    "and Israel attack Iran'), for a supplier in that "
+                    "country create a risk with severity 'high' and "
+                    "risk_type 'war' or 'armed_conflict' with "
+                    "affectedRegion set to that country.\n"
+                    "- For regions that could be indirectly affected by "
+                    "the conflict (e.g. neighbouring countries, key trade "
+                    "partners, or regions with significant supply chain "
+                    "exposure to the conflict zone): create a separate "
+                    "risk entry with severity 'high' and risk_type "
+                    "'geopolitical_tension', and populate affectedRegion "
+                    "with that region.\n"
+                    "- Never downgrade a war/armed conflict event to "
+                    "'medium' or 'low' severity.\n\n"
+                    "IMPORTANT: Be conservative with severity for distant "
+                    "macro events — rate 'high' or 'critical' only when there "
+                    "is confirmed, direct impact on this supplier. News "
+                    "articles may be in any language; return all extracted "
+                    "fields in English. Only set estimatedCost when the "
+                    "article provides a concrete figure."
                 ),
             ),
             (
                 "user",
                 (
                     "Analyze the following news items for global supply "
-                    "chain risks relevant to this OEM and supplier.\n\n"
+                    "chain risks and opportunities relevant to this OEM "
+                    "and supplier.\n\n"
                     f"=== Entity Context ===\n{entity_context}\n\n"
                     "=== News Items ===\n{news_items_json}\n\n"
                     "Return JSON of shape:\n"
@@ -501,18 +941,29 @@ def _build_global_prompt(
                     '      "description": str,\n'
                     '      "severity": "low" | "medium" | '
                     '"high" | "critical",\n'
-                    '      "affectedRegion": str | null,\n'
-                    '      "affectedSupplier": null,\n'
+                    '      "affectedRegion": str (REQUIRED — the country or region),\n'
+                    '      "affectedSupplier": str | null,\n'
                     '      "estimatedImpact": str | null,\n'
                     '      "estimatedCost": number | null,\n'
                     '      "risk_type": str,\n'
                     '      "source": str | null\n'
                     "    }}\n"
                     "  ],\n"
-                    '  "opportunities": []\n'
+                    '  "opportunities": [\n'
+                    "    {{\n"
+                    '      "title": str,\n'
+                    '      "description": str,\n'
+                    '      "type": "cost_saving" | '
+                    '"time_saving" | "quality_improvement" | '
+                    '"market_expansion" | '
+                    '"supplier_diversification",\n'
+                    '      "affectedRegion": str | null,\n'
+                    '      "potentialBenefit": str | null,\n'
+                    '      "estimatedValue": number | null\n'
+                    "    }}\n"
+                    "  ]\n"
                     "}}\n"
-                    "If no material global risks, return "
-                    '{{"risks": [], "opportunities": []}}.'
+                    "If none, use empty arrays."
                 ),
             ),
         ]
@@ -554,7 +1005,14 @@ async def _news_risk_llm_node(state: NewsAgentState) -> NewsAgentState:
     model_name = getattr(llm, "model_name", None) or getattr(llm, "model", "unknown")
     call_id = _uuid.uuid4().hex[:8]
 
-    items_json = json.dumps(items, indent=2)
+    # Sort most-recent articles first so the LLM sees breaking news at the top
+    items_sorted = sorted(
+        items,
+        key=lambda x: x.get("publishedAt") or "",
+        reverse=True,
+    )
+
+    items_json = json.dumps(items_sorted, indent=2)
     prompt_text = prompt.format(news_items_json=items_json)
     start = time.perf_counter()
 
@@ -647,19 +1105,22 @@ _builder = StateGraph(NewsAgentState)
 # Parallel fetch nodes (fan-out from START)
 _builder.add_node("fetch_newsapi", _fetch_newsapi_node)
 _builder.add_node("fetch_gdelt", _fetch_gdelt_node)
+_builder.add_node("fetch_top_headlines", _fetch_top_headlines_node)
 
 # Fan-in merge then existing pipeline
 _builder.add_node("merge_news", _merge_news_node)
 _builder.add_node("build_items", _build_news_items_node)
 _builder.add_node("news_risk_llm", _news_risk_llm_node)
 
-# Fan-out: START → both fetch nodes in parallel
+# Fan-out: START → all three fetch nodes in parallel
 _builder.add_edge(START, "fetch_newsapi")
 _builder.add_edge(START, "fetch_gdelt")
+_builder.add_edge(START, "fetch_top_headlines")
 
-# Fan-in: both fetch nodes → merge
+# Fan-in: all fetch nodes → merge
 _builder.add_edge("fetch_newsapi", "merge_news")
 _builder.add_edge("fetch_gdelt", "merge_news")
+_builder.add_edge("fetch_top_headlines", "merge_news")
 
 # Linear pipeline after merge
 _builder.add_edge("merge_news", "build_items")
@@ -703,12 +1164,16 @@ async def run_news_agent_graph(
     news_data: dict[str, list[dict]],
     scope: OemScope,
     context: Literal["supplier", "global"],
+    prefetched_broad_headlines: list[dict] | None = None,
 ) -> dict[str, list[dict]]:
     """
     Orchestrate the News Agent using LangGraph and LangChain.
 
     Fetches from NewsAPI and GDELT in parallel, merges and deduplicates the
     articles, then runs LLM risk/opportunity extraction.
+
+    When prefetched_broad_headlines is provided (e.g. once per OEM), the graph
+    skips the broad-headline API call to avoid 429 rate limits.
 
     OEM and supplier details are fetched from the database using ``oemId``
     and ``supplierId`` from the scope.
@@ -732,6 +1197,7 @@ async def run_news_agent_graph(
         "context": context,
         "oem_data": oem_data,
         "supplier_data": supplier_data,
+        "prefetched_broad_headlines": prefetched_broad_headlines,
     }
 
     final_state = await NEWS_GRAPH.ainvoke(initial_state)

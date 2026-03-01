@@ -34,6 +34,7 @@ from app.services.agent_types import OemScope
 from app.agents.weather import run_weather_agent_graph
 from app.agents.news import run_news_agent_graph
 from app.agents.shipment import run_shipment_risk_graph
+from app.data.active_conflicts import get_conflict_risks_for_supplier
 from app.orchestration.graphs.states import SupplierRiskState
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ logger = logging.getLogger(__name__)
 SEVERITY_WEIGHT: dict[str, int] = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 # Weather weight reduced — only severe/direct weather events should significantly
 # affect the supplier score. Moderate weather along a route is normal.
-DOMAIN_WEIGHTS: dict[str, float] = {"weather": 0.6, "shipping": 1.3, "news": 1.1}
+DOMAIN_WEIGHTS: dict[str, float] = {"weather": 0.6, "shipping": 1.3, "news": 1.1, "geopolitical": 1.5}
 # Higher K value = gentler curve, requires more weight to reach high scores.
 # Prevents a handful of moderate risks from saturating the score.
 RISK_SCORE_CURVE_K: float = 18.0
@@ -95,8 +96,12 @@ def compute_score_from_dicts(risks: list[dict]) -> tuple[float, dict, dict]:
                 # No boost for exposure < 85; the base severity weight is sufficient
         elif src == "news":
             risk_type = (src_data or {}).get("risk_type")
-            if risk_type in {"factory_shutdown", "bankruptcy_risk", "sanction_risk"}:
+            if risk_type in {"war", "armed_conflict"}:
+                pointer_boost = 1.5
+            elif risk_type in {"factory_shutdown", "bankruptcy_risk", "sanction_risk", "geopolitical_tension"}:
                 pointer_boost = 1.3
+        elif src == "geopolitical":
+            pointer_boost = 1.5  # active conflict exposure is critical
 
         weight = sev_weight * domain_weight * pointer_boost
         base_weight += weight
@@ -141,6 +146,8 @@ async def _run_agents_node(state: SupplierRiskState) -> SupplierRiskState:
     raw_news = state.get("raw_news_data") or {}
     raw_global_news = state.get("raw_global_news_data") or {}
 
+    prefetched_headlines = state.get("prefetched_broad_headlines")
+
     (
         weather_result,
         news_supplier_result,
@@ -148,8 +155,8 @@ async def _run_agents_node(state: SupplierRiskState) -> SupplierRiskState:
         shipping_result,
     ) = await asyncio.gather(
         run_weather_agent_graph(raw_weather, scope),
-        run_news_agent_graph(raw_news, scope, context="supplier"),
-        run_news_agent_graph(raw_global_news, scope, context="global"),
+        run_news_agent_graph(raw_news, scope, context="supplier", prefetched_broad_headlines=prefetched_headlines),
+        run_news_agent_graph(raw_global_news, scope, context="global", prefetched_broad_headlines=prefetched_headlines),
         run_shipment_risk_graph(scope),
     )
 
@@ -231,6 +238,29 @@ async def _run_agents_node(state: SupplierRiskState) -> SupplierRiskState:
             r.get("title", ""),
         )
 
+    # ── Geopolitical conflict (active conflict list) ─────────────────────────────
+    # When supplier country/region matches a conflict country, inject critical risks
+    # so score and swarm topDrivers reflect exposure.
+    countries_from_scope = scope.get("countries") or []
+    regions_from_scope = scope.get("regions") or []
+    geo_risks = get_conflict_risks_for_supplier(
+        countries=countries_from_scope,
+        regions=regions_from_scope,
+        supplier_name=scope.get("supplierName"),
+    )
+    if geo_risks:
+        logger.info(
+            "SupplierRiskGraph[%s] ── GEOPOLITICAL (active conflict): risks=%d",
+            label, len(geo_risks),
+        )
+        for r in geo_risks:
+            logger.info(
+                "  [geopolitical risk] severity=%-8s title=%s | region=%s",
+                r.get("severity", "?"),
+                r.get("title", ""),
+                r.get("affectedRegion") or "—",
+            )
+
     return {
         "weather_risks": weather_result.get("risks") or [],
         "weather_opportunities": weather_result.get("opportunities") or [],
@@ -238,6 +268,7 @@ async def _run_agents_node(state: SupplierRiskState) -> SupplierRiskState:
         "news_supplier_opportunities": news_supplier_result.get("opportunities") or [],
         "news_global_risks": news_global_result.get("risks") or [],
         "shipping_risks": shipping_result.get("risks") or [],
+        "geopolitical_risks": geo_risks,
     }
 
 
@@ -251,6 +282,7 @@ def _merge_and_score_node(state: SupplierRiskState) -> SupplierRiskState:
         + (state.get("news_supplier_risks") or [])
         + (state.get("news_global_risks") or [])
         + (state.get("shipping_risks") or [])
+        + (state.get("geopolitical_risks") or [])
     )
     all_opportunities: list[dict] = (
         (state.get("weather_opportunities") or [])

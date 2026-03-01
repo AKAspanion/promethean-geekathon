@@ -8,6 +8,16 @@ Fetches news and trend signals relevant to:
 Uses NewsAPI when a key is configured; falls back to rich mock data so the
 demo works out-of-the-box without any external API key.
 
+Request budget: at most 4 HTTP calls per fetch_data invocation.
+
+  Request 1 — /top-headlines  (breaking global/conflict news, OR-combined query)
+  Request 2 — /everything     (material queries OR-combined, date-filtered)
+  Request 3 — /everything     (supplier queries OR-combined, date-filtered)
+  Request 4 — /everything     (global macro queries OR-combined, date-filtered)
+
+Using NewsAPI's boolean OR syntax to pack many individual search terms into
+each query string avoids the per-term fan-out that caused 429 rate-limit errors.
+
 Each result is normalised to:
   {
     "title":          str,
@@ -20,11 +30,11 @@ Each result is normalised to:
     "query":          str   (the search term used),
   }
 """
-
 from __future__ import annotations
 
+import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 import httpx
@@ -37,6 +47,30 @@ logger = logging.getLogger(__name__)
 TrendLevel = Literal["material", "supplier", "global"]
 
 _NEWSAPI_BASE = "https://newsapi.org/v2"
+_LOOKBACK_DAYS = 3
+_PAGE_SIZE = 20
+_MAX_CONCURRENT = 4
+
+# Always included in the /top-headlines breaking-news query
+_BREAKING_TERMS = [
+    "attack", "armed conflict", "sanctions", "supply chain disruption",
+    "trade tariff", "factory shutdown",
+]
+
+
+def _build_or_query(terms: list[str], max_terms: int = 8) -> str:
+    """Join terms into a NewsAPI boolean OR query.
+
+    Multi-word terms are wrapped in double quotes so NewsAPI treats them as
+    exact phrases rather than independent tokens.
+    """
+    parts: list[str] = []
+    for t in terms[:max_terms]:
+        t = t.strip()
+        if not t:
+            continue
+        parts.append(f'"{t}"' if " " in t else t)
+    return " OR ".join(parts)
 
 
 class TrendDataSource(BaseDataSource):
@@ -70,70 +104,138 @@ class TrendDataSource(BaseDataSource):
         supplier_queries: list[str] = p.get("supplier_queries") or []
         global_queries: list[str] = p.get("global_queries") or [
             "global supply chain risk",
-            "trade disruption 2025",
+            "trade disruption 2026",
             "manufacturing shortage",
         ]
 
+        if not self._api_key:
+            return self._mock_results(material_queries, supplier_queries, global_queries)
+
+        from_date = (
+            datetime.now(timezone.utc) - timedelta(days=_LOOKBACK_DAYS)
+        ).strftime("%Y-%m-%d")
+
+        sem = asyncio.Semaphore(_MAX_CONCURRENT)
+
+        # Build one OR-combined query per scope bucket (max 8 terms each)
+        q_material = _build_or_query(material_queries[:8])
+        q_supplier = _build_or_query(supplier_queries[:8])
+        q_global = _build_or_query(global_queries[:8])
+        # Breaking-news headline query: fixed conflict terms + any global queries
+        q_headlines = _build_or_query((_BREAKING_TERMS + global_queries)[:8])
+
+        batches = await asyncio.gather(
+            self._get_headlines(q_headlines, "global", sem),
+            self._get_everything(q_material, "material", from_date, sem) if q_material else _empty(),
+            self._get_everything(q_supplier, "supplier", from_date, sem) if q_supplier else _empty(),
+            self._get_everything(q_global, "global", from_date, sem) if q_global else _empty(),
+        )
+
         results: list[DataSourceResult] = []
-
-        for q in material_queries:
-            items = await self._fetch_for_query(q, "material")
-            results.extend(items)
-
-        for q in supplier_queries:
-            items = await self._fetch_for_query(q, "supplier")
-            results.extend(items)
-
-        for q in global_queries:
-            items = await self._fetch_for_query(q, "global")
-            results.extend(items)
+        for batch in batches:
+            results.extend(batch)
 
         if not results:
-            results = self._mock_results(
-                material_queries, supplier_queries, global_queries
-            )
+            results = self._mock_results(material_queries, supplier_queries, global_queries)
 
+        logger.info(
+            "TrendDataSource: %d results (4 requests: 1 headlines + 3 everything)",
+            len(results),
+        )
         return results
 
-    # ── NewsAPI fetch ─────────────────────────────────────────────────
+    # ── NewsAPI requests ──────────────────────────────────────────────
 
-    async def _fetch_for_query(
-        self, query: str, level: TrendLevel
+    async def _get_headlines(
+        self, query: str, level: TrendLevel, sem: asyncio.Semaphore
     ) -> list[DataSourceResult]:
-        if not self._api_key:
-            return self._mock_for_query(query, level)
-
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    f"{_NEWSAPI_BASE}/everything",
-                    params={
-                        "q": query,
-                        "apiKey": self._api_key,
-                        "sortBy": "publishedAt",
-                        "pageSize": 5,
-                        "language": "en",
-                    },
-                    timeout=10.0,
-                )
+        """Fetch top-headlines — catches breaking events not yet indexed by /everything."""
+        if not query:
+            return []
+        async with sem:
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.get(
+                        f"{_NEWSAPI_BASE}/top-headlines",
+                        params={
+                            "q": query,
+                            "apiKey": self._api_key,
+                            "pageSize": _PAGE_SIZE,
+                            "language": "en",
+                        },
+                        timeout=12.0,
+                    )
                 if resp.status_code == 200:
                     articles = resp.json().get("articles") or []
+                    logger.info(
+                        "TrendDataSource /top-headlines q=%r → %d articles",
+                        query[:60], len(articles),
+                    )
                     return [
                         self._create_result(self._normalise_article(art, level, query))
                         for art in articles
                     ]
                 logger.warning(
-                    "NewsAPI returned %d for query '%s': %s",
-                    resp.status_code,
-                    query,
-                    resp.text[:200],
+                    "TrendDataSource /top-headlines %d for q=%r: %s",
+                    resp.status_code, query[:60], resp.text[:200],
                 )
-        except Exception as exc:
-            logger.exception(
-                "TrendDataSource fetch error for query '%s': %s", query, exc
-            )
+            except Exception as exc:
+                logger.exception("TrendDataSource /top-headlines error: %s", exc)
+        return []
 
+    async def _get_everything(
+        self,
+        query: str,
+        level: TrendLevel,
+        from_date: str,
+        sem: asyncio.Semaphore,
+    ) -> list[DataSourceResult]:
+        """Fetch recent articles via /everything with a date lower bound."""
+        if not query:
+            return []
+        async with sem:
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.get(
+                        f"{_NEWSAPI_BASE}/everything",
+                        params={
+                            "q": query,
+                            "apiKey": self._api_key,
+                            "sortBy": "publishedAt",
+                            "pageSize": _PAGE_SIZE,
+                            "language": "en",
+                            "from": from_date,
+                        },
+                        timeout=12.0,
+                    )
+                if resp.status_code == 200:
+                    articles = resp.json().get("articles") or []
+                    logger.info(
+                        "TrendDataSource /everything q=%r → %d articles",
+                        query[:60], len(articles),
+                    )
+                    return [
+                        self._create_result(self._normalise_article(art, level, query))
+                        for art in articles
+                    ]
+                logger.warning(
+                    "TrendDataSource /everything %d for q=%r: %s",
+                    resp.status_code, query[:60], resp.text[:200],
+                )
+            except Exception as exc:
+                logger.exception("TrendDataSource /everything error: %s", exc)
         return self._mock_for_query(query, level)
+
+    # ── Legacy compatibility shim ─────────────────────────────────────
+
+    async def _fetch_for_query(
+        self, query: str, level: TrendLevel
+    ) -> list[DataSourceResult]:
+        from_date = (
+            datetime.now(timezone.utc) - timedelta(days=_LOOKBACK_DAYS)
+        ).strftime("%Y-%m-%d")
+        sem = asyncio.Semaphore(1)
+        return await self._get_everything(query, level, from_date, sem)
 
     # ── Normalisers ───────────────────────────────────────────────────
 
@@ -144,7 +246,7 @@ class TrendDataSource(BaseDataSource):
             "summary": art.get("description") or art.get("content") or "",
             "source": (art.get("source") or {}).get("name") or "Unknown",
             "published_at": art.get("publishedAt")
-            or datetime.utcnow().isoformat() + "Z",
+            or datetime.now(timezone.utc).isoformat(),
             "url": art.get("url"),
             "relevance_score": 0.8,
             "level": level,
@@ -154,9 +256,8 @@ class TrendDataSource(BaseDataSource):
     # ── Mock data ─────────────────────────────────────────────────────
 
     def _mock_for_query(self, query: str, level: TrendLevel) -> list[DataSourceResult]:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         items = _MOCK_ARTICLES.get(level, [])
-        # pick the first 3 that loosely match the query keyword
         q_lower = query.lower()
         matched = [
             a for a in items if any(w in a["title"].lower() for w in q_lower.split())
@@ -169,8 +270,7 @@ class TrendDataSource(BaseDataSource):
                 self._create_result(
                     {
                         **art,
-                        "published_at": (now - timedelta(hours=i * 6)).isoformat()
-                        + "Z",
+                        "published_at": (now - timedelta(hours=i * 6)).isoformat() + "Z",
                         "relevance_score": 0.7 - i * 0.05,
                         "level": level,
                         "query": query,
@@ -193,6 +293,11 @@ class TrendDataSource(BaseDataSource):
         for q in global_queries or ["global trade risk"]:
             results.extend(self._mock_for_query(q, "global"))
         return results
+
+
+async def _empty() -> list:
+    """No-op coroutine returning an empty list (used in place of skipped gather slots)."""
+    return []
 
 
 # ── Rich mock article library ─────────────────────────────────────────

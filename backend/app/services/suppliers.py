@@ -161,15 +161,19 @@ def delete_one(db: Session, id: UUID, oem_id: UUID) -> bool:
     return True
 
 
-def get_risks_by_supplier(db: Session) -> dict:
+def get_risks_by_supplier(db: Session, oem_id: Optional[UUID] = None) -> dict:
     """
     Lightweight aggregation used by the existing UI to show simple counts.
 
     Resolves risks to supplier names via affectedSupplier/affectedSuppliers
     first, then falls back to the supplierId FK for risks where the LLM
     returned a null affectedSupplier (e.g. global-context news risks).
+
+    When oem_id is provided, only risks for that OEM are included so the
+    summary matches the OEM's suppliers list (and war/news risks are not
+    mixed across OEMs).
     """
-    risks = (
+    q = (
         db.query(
             Risk.id,
             Risk.title,
@@ -180,8 +184,10 @@ def get_risks_by_supplier(db: Session) -> dict:
             Risk.createdAt,
         )
         .order_by(Risk.createdAt.desc())
-        .all()
     )
+    if oem_id is not None:
+        q = q.filter(Risk.oemId == oem_id)
+    risks = q.all()
 
     # Build a supplierId -> supplier name lookup for risks missing affectedSupplier
     supplier_ids_needing_name: set = set()
@@ -195,12 +201,12 @@ def get_risks_by_supplier(db: Session) -> dict:
 
     supplier_id_to_name: Dict[str, str] = {}
     if supplier_ids_needing_name:
-        rows = (
-            db.query(Supplier.id, Supplier.name)
-            .filter(Supplier.id.in_(supplier_ids_needing_name))
-            .all()
+        q_sup = db.query(Supplier.id, Supplier.name).filter(
+            Supplier.id.in_(supplier_ids_needing_name)
         )
-        for row in rows:
+        if oem_id is not None:
+            q_sup = q_sup.filter(Supplier.oemId == oem_id)
+        for row in q_sup.all():
             supplier_id_to_name[str(row.id)] = row.name
 
     out: Dict[str, dict] = {}

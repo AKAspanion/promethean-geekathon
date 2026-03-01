@@ -52,7 +52,7 @@ def list_suppliers(
     oem: Oem = Depends(get_current_oem),
 ):
     suppliers = get_all(db, oem.id)
-    risk_map = get_risks_by_supplier(db)
+    risk_map = get_risks_by_supplier(db, oem.id)
     reasoning_map = get_latest_risk_analysis_by_supplier(db, oem.id)
     swarm_map = get_latest_swarm_by_supplier(db, oem.id)
     return [
@@ -289,7 +289,7 @@ def get_supplier_by_id(
     supplier = get_one(db, id, oem.id)
     if not supplier:
         return None
-    risk_map = get_risks_by_supplier(db)
+    risk_map = get_risks_by_supplier(db, oem.id)
     reasoning_map = get_latest_risk_analysis_by_supplier(db, oem.id)
     swarm_map = get_latest_swarm_by_supplier(db, oem.id)
     return {
@@ -358,7 +358,7 @@ def update_supplier(
     supplier = update_one(db, id, oem.id, data)
     if not supplier:
         raise HTTPException(status_code=404, detail="Supplier not found")
-    risk_map = get_risks_by_supplier(db)
+    risk_map = get_risks_by_supplier(db, oem.id)
     reasoning_map = get_latest_risk_analysis_by_supplier(db, oem.id)
     swarm_map = get_latest_swarm_by_supplier(db, oem.id)
     return _format_supplier(supplier, risk_map, swarm_map, reasoning_map)
